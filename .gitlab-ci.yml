@@ -1,0 +1,48 @@
+# Constellation — merge-request analysis pipeline (deployment Path B).
+#
+# On every merge request, this job indexes the repo with Orbit, runs the
+# four-lens orchestrator over the changed symbols, and posts the verdict as an
+# MR comment (and can fail the pipeline when the Decision Gate says BLOCK).
+#
+# Required CI/CD variables (Settings -> CI/CD -> Variables):
+#   CONSTELLATION_TOKEN   project access token, `api` scope, Reporter+  (masked, protected)
+#   ORBIT_DOWNLOAD_URL    URL of the Linux x86_64 Orbit binary           (see note below)
+# Optional:
+#   CONSTELLATION_ENFORCE set to "1" to make a BLOCK verdict fail the pipeline (a real gate)
+#
+# NOTE: ORBIT_DOWNLOAD_URL is the one external dependency to confirm — it must
+# point at the *Linux* Orbit binary (the bundled bin/orbit.exe is Windows-only
+# and is intentionally git-ignored). If Orbit Local is not available for Linux
+# CI, the job degrades to the mock backend (clearly-labeled) so the pipeline
+# still demonstrates the end-to-end loop.
+
+stages:
+  - analyze
+
+constellation:
+  stage: analyze
+  image: python:3.12-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  variables:
+    GIT_DEPTH: "0"            # full history so the MR diff base is reachable
+    ORBIT_BIN: "/usr/local/bin/orbit"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl git ca-certificates
+    - |
+      if [ -n "$ORBIT_DOWNLOAD_URL" ]; then
+        echo "Downloading Orbit (Linux) ..."
+        curl -fsSL "$ORBIT_DOWNLOAD_URL" -o "$ORBIT_BIN" && chmod +x "$ORBIT_BIN"
+        "$ORBIT_BIN" --version || echo "WARN: orbit --version failed"
+        echo "Indexing repo with Orbit ..."
+        "$ORBIT_BIN" index . || echo "WARN: orbit index failed; will fall back to mock"
+      else
+        echo "ORBIT_DOWNLOAD_URL not set — running with mock Orbit backend (loop demo only)."
+      fi
+  script:
+    - python ci/run_ci.py
+  artifacts:
+    when: always
+    paths:
+      - constellation_verdict.md
+    expire_in: 1 week
