@@ -431,11 +431,24 @@ JOIN gl_definition d ON d.id = c.id;
         base = p.rsplit("/", 1)[-1]
         return (
             "/tests/" in p or "/test/" in p or "/spec/" in p or "/specs/" in p
-            or "integration-tests" in p or "/fixtures/" in p or "/fuzz/" in p
+            or "integration-tests" in p or "integration-testkit" in p
+            or "testkit" in p or "testutil" in p or "test-util" in p
+            or "/fixtures/" in p or "/fuzz/" in p
             or "/benches/" in p or "/examples/" in p
             or base.startswith("test_") or base.startswith("test.")
             or base.endswith("_test.py") or base.endswith("_test.go")
             or ".test." in base or ".spec." in base
+        )
+
+    @staticmethod
+    def _is_generated_path(file_path: str) -> bool:
+        """Heuristic: machine-generated code (no tests expected; exclude from risk)."""
+        p = (file_path or "").replace("\\", "/").lower()
+        base = p.rsplit("/", 1)[-1]
+        return (
+            base.endswith(".pb.go") or base.endswith("_pb2.py") or base.endswith(".g.dart")
+            or ".gen." in base or "_generated" in base or "generated" in p
+            or "/gen/" in p or base.endswith(".pb.rs")
         )
 
     def _query_affected_files(self, symbols: List[str]) -> List[Dict[str, Any]]:
