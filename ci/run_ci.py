@@ -79,10 +79,19 @@ def main() -> int:
     except Exception:
         pass
 
-    if os.environ.get("CI_MERGE_REQUEST_IID"):
+    in_mr = bool(os.environ.get("CI_MERGE_REQUEST_IID"))
+    have_token = bool(os.environ.get("CONSTELLATION_TOKEN"))
+    if in_mr and have_token:
         status = post_or_update_verdict(markdown)
         print(f"Posted verdict to MR, HTTP {status}")
     else:
+        if in_mr and not have_token:
+            print(
+                "\n[!] CONSTELLATION_TOKEN not set — verdict computed but NOT posted.\n"
+                "    Add it under Settings -> CI/CD -> Variables (api scope, Masked, "
+                "Protected OFF), then re-run.\n"
+            )
+        print("----- CONSTELLATION VERDICT -----")
         print(markdown)
 
     # Optional: make the pipeline fail (red) when the gate says BLOCK, so the
