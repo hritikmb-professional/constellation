@@ -1,0 +1,325 @@
+# Constellation: Duo Agent Platform Flow Definition
+#
+# This flow orchestrates the Impact and Provenance agents
+# Triggered on: MR opened, Vulnerability finding created
+# Output: MR comment with composed verdict
+
+# Reference: https://docs.gitlab.com/ee/ai/duo_agent_platform/
+# Status: Template - ready to deploy to GitLab instance
+
+version: "1.0"
+name: "constellation-analysis"
+description: "Graph-Native DevOps Intelligence on GitLab Orbit"
+
+# ============================================================================
+# TRIGGERS: When the flow runs
+# ============================================================================
+triggers:
+  - type: "merge_request"
+    action: "opened"
+    description: "Analyze MR blast radius and compliance"
+
+  - type: "vulnerability"
+    action: "created"
+    description: "Trace vulnerability lineage and exposure"
+
+# ============================================================================
+# AGENTS: The analytical components
+# ============================================================================
+agents:
+  # Impact Agent: Compute change blast radius
+  - name: "impact"
+    description: "Compute true change blast radius"
+    type: "custom"
+    entrypoint: "agents/impact/impact_agent.py"
+    system_prompt_file: "agents/impact/system-prompt.md"
+    tools:
+      - orbit_query
+      - confidence_scoring
+    input_schema:
+      type: object
+      properties:
+        mr_id:
+          type: string
+          description: "Merge request ID"
+        changed_symbols:
+          type: array
+          items:
+            type: string
+          description: "Function/class names that changed"
+    output_schema:
+      type: object
+      properties:
+        total_dependents:
+          type: integer
+        affected_services:
+          type: array
+        affected_owners:
+          type: array
+        change_failure_rate:
+          type: number
+        confidence:
+          type: number
+
+  # Provenance Agent: Trace vulnerability lineage
+  - name: "provenance"
+    description: "Trace vulnerability lineage and exposure"
+    type: "custom"
+    entrypoint: "agents/provenance/provenance_agent.py"
+    system_prompt_file: "agents/provenance/system-prompt.md"
+    tools:
+      - orbit_query
+      - mermaid_graph_generator
+      - work_item_creator
+    input_schema:
+      type: object
+      properties:
+        finding_id:
+          type: string
+        title:
+          type: string
+        severity:
+          type: string
+          enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        affected_symbol:
+          type: string
+    output_schema:
+      type: object
+      properties:
+        lineage_chain:
+          type: array
+        exposure_scope:
+          type: array
+        remediation_work_item_id:
+          type: string
+        confidence:
+          type: number
+
+# ============================================================================
+# FLOWS: The orchestration logic
+# ============================================================================
+flows:
+  # Flow 1: MR opened
+  - name: "mr-analysis"
+    trigger: "merge_request.opened"
+    steps:
+      - name: "extract-changed-symbols"
+        description: "Extract function/class names from MR diff"
+        type: "action"
+        action:
+          type: "git_diff_parser"
+          inputs:
+            mr_id: "${trigger.merge_request.iid}"
+        outputs:
+          changed_symbols: "$.symbols"
+
+      # Findings in scope are an SDLC concern (gl_finding) that lights up on a
+      # live GitLab/Orbit-Remote instance. When present they are passed into the
+      # event below so Provenance composes on Impact's subgraph; absent, the
+      # other three lenses still run.
+      - name: "check-for-vulnerabilities"
+        description: "Query findings on the changed symbols (deploy-time SDLC source)"
+        type: "action"
+        action:
+          type: "orbit_query"
+          query: "findings_for_symbols"
+          inputs:
+            symbols: "${extract-changed-symbols.changed_symbols}"
+        outputs:
+          vulnerabilities: "$.findings"
+
+      # Single in-process entry: runs the SAME orchestrator the integration
+      # tests exercise — Impact materializes the subgraph; Ownership, Compliance,
+      # and Provenance consume it; risk is blended; the Decision Gate is applied.
+      # (We do NOT run each lens as a separate flow step: the composition passes
+      # a live MaterializedSubgraph object that cannot be serialized between steps.)
+      - name: "run-constellation"
+        description: "Run the full four-lens composition and Decision Gate"
+        type: "action"
+        action:
+          type: "python"
+          script: "orchestrator/run_constellation.py"
+          inputs:
+            event:
+              event_id: "${trigger.merge_request.iid}"
+              event_type: "mr_opened"
+              payload:
+                mr_id: "${trigger.merge_request.iid}"
+                changed_symbols: "${extract-changed-symbols.changed_symbols}"
+                mr_title: "${trigger.merge_request.title}"
+                findings: "${check-for-vulnerabilities.vulnerabilities}"
+        outputs:
+          recommended_action: "$.recommended_action"
+          overall_risk_level: "$.overall_risk_level"
+          markdown: "$.markdown"
+
+      - name: "post-to-mr"
+        description: "Post verdict as MR comment"
+        type: "action"
+        action:
+          type: "gitlab_api"
+          endpoint: "/projects/${trigger.project.id}/merge_requests/${trigger.merge_request.iid}/notes"
+          method: "POST"
+          body:
+            body: "${run-constellation.markdown}"
+
+      # Optional enforcement: when the Decision Gate blocks, request changes so
+      # the gate is an actual control, not just a comment. (Deploy-time.)
+      - name: "enforce-gate-if-blocked"
+        description: "Request changes when the Decision Gate returns BLOCK"
+        type: "conditional"
+        condition: "${run-constellation.recommended_action == 'BLOCK'}"
+        steps:
+          - name: "request-changes"
+            type: "action"
+            action:
+              type: "gitlab_api"
+              endpoint: "/projects/${trigger.project.id}/merge_requests/${trigger.merge_request.iid}/notes"
+              method: "POST"
+              body:
+                body: "Constellation Decision Gate: **BLOCK** — see analysis above. Resolve the flagged risks before merge."
+
+  # Flow 2: Vulnerability finding created
+  - name: "finding-analysis"
+    trigger: "vulnerability.created"
+    steps:
+      - name: "run-provenance-agent"
+        description: "Trace full vulnerability lineage"
+        type: "agent"
+        agent: "provenance"
+        inputs:
+          finding_id: "${trigger.finding.id}"
+          title: "${trigger.finding.title}"
+          severity: "${trigger.finding.severity}"
+          affected_symbol: "${trigger.finding.affected_symbol}"
+        outputs:
+          provenance_verdict: "$"
+
+      - name: "compose-verdict"
+        description: "Format as standalone vulnerability verdict"
+        type: "action"
+        action:
+          type: "python"
+          script: "orchestrator/compose_verdict.py"
+          inputs:
+            impact: null
+            provenance: "${run-provenance-agent.provenance_verdict}"
+            event_type: "finding_created"
+        outputs:
+          verdict: "$.verdict"
+          markdown: "$.markdown"
+
+      - name: "post-finding-comment"
+        description: "Post on finding page"
+        type: "action"
+        action:
+          type: "gitlab_api"
+          endpoint: "/projects/${trigger.project.id}/vulnerabilities/${trigger.finding.id}/notes"
+          method: "POST"
+          body:
+            body: "${compose-verdict.markdown}"
+
+      - name: "create-remediation"
+        description: "Create remediation work item"
+        type: "action"
+        action:
+          type: "gitlab_api"
+          endpoint: "/projects/${trigger.project.id}/work_items"
+          method: "POST"
+          body:
+            title: "Remediate: ${run-provenance-agent.provenance_verdict.finding_title}"
+            description: "Introduced by: ${run-provenance-agent.provenance_verdict.introducing_author}\n\n${compose-verdict.markdown}"
+            assignee_ids: ["${run-provenance-agent.provenance_verdict.introducing_author_id}"]
+            labels: ["security", "vulnerability"]
+            priority: "high"
+
+# ============================================================================
+# TOOLS: Available to agents and actions
+# ============================================================================
+tools:
+  - name: "orbit_query"
+    description: "Query GitLab Orbit graph"
+    type: "api"
+    endpoint: "/orbit/query"
+    auth: "gitlab_token"
+
+  - name: "confidence_scoring"
+    description: "Compute confidence scores for verdicts"
+    type: "internal"
+    logic: "shared/confidence.py"
+
+  - name: "mermaid_graph_generator"
+    description: "Generate mermaid graphs for lineage visualization"
+    type: "internal"
+    logic: "shared/mermaid_generator.py"
+
+  - name: "work_item_creator"
+    description: "Create GitLab work items for remediation"
+    type: "api"
+    endpoint: "/work_items"
+    auth: "gitlab_token"
+
+# ============================================================================
+# POLICIES: Governance and guardrails
+# ============================================================================
+policies:
+  - name: "rate_limit"
+    description: "Limit to 10 analyses per minute per project"
+    type: "throttle"
+    config:
+      window: "60s"
+      limit: 10
+      scope: "project"
+
+  - name: "access_control"
+    description: "Only maintainers can trigger manual analysis"
+    type: "rbac"
+    config:
+      trigger_manual: "maintainer"
+      trigger_automatic: "any"
+
+  - name: "audit_logging"
+    description: "Log all verdicts for audit trail"
+    type: "audit"
+    config:
+      destination: "project_audit_log"
+      include: ["verdict", "timestamp", "triggered_by", "evidence_trails"]
+
+# ============================================================================
+# ERROR HANDLING
+# ============================================================================
+on_error:
+  steps:
+    - name: "log-error"
+      type: "action"
+      action:
+        type: "logger"
+        level: "error"
+        message: "Constellation analysis failed: ${error.message}"
+
+    - name: "notify-maintainers"
+      type: "action"
+      action:
+        type: "gitlab_api"
+        endpoint: "/projects/${trigger.project.id}/issues"
+        method: "POST"
+        body:
+          title: "Constellation analysis failed"
+          description: "Error: ${error.message}\nFull trace available in flow logs."
+          labels: ["bug", "constellation"]
+
+# ============================================================================
+# METADATA
+# ============================================================================
+metadata:
+  version: "1.0"
+  authors: ["AeroFyta"]
+  license: "MIT"
+  repository: "https://gitlab.com/your-group/constellation"
+  documentation_url: "https://gitlab.com/your-group/constellation/-/blob/main/README.md"
+  published_to_catalog: false  # Set to true after testing
+  catalog_tags:
+    - "devops"
+    - "security"
+    - "code-quality"
+    - "vulnerability-management"

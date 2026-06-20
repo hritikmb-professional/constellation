@@ -1,0 +1,100 @@
+name: Constellation - Multi-Agent DevOps Intelligence
+description: Real-time analysis of code changes for impact, ownership, compliance, and vulnerability exposure
+version: "2.0"
+
+on:
+  merge_request:
+    types:
+      - opened
+      - updated
+  security_finding:
+    types:
+      - created
+
+defaults:
+  timeout: 60
+  retry: 2
+
+# ---------------------------------------------------------------------------
+# Single in-process entry point.
+#
+# Constellation's lenses compose by passing a live MaterializedSubgraph object
+# between them (Impact materializes it; Ownership, Compliance, and Provenance
+# consume it WITHOUT re-querying Orbit). That object cannot be serialized
+# between separate flow jobs, so we do NOT run one job per agent and stitch the
+# outputs with bespoke risk logic. Instead a single job runs the exact
+# orchestrator the integration tests exercise — full four-lens composition,
+# blended risk (0.6*peak + 0.4*avg), and the Decision Gate — and returns the
+# verdict markdown to post on the MR.
+# ---------------------------------------------------------------------------
+jobs:
+  constellation:
+    name: Run Constellation (four-lens composition + Decision Gate)
+    trigger_on: merge_request
+    run:
+      type: python
+      script: orchestrator/run_constellation.py
+      input:
+        event:
+          event_id: ${{ mr.id }}
+          event_type: mr_opened
+          payload:
+            mr_id: ${{ mr.id }}
+            changed_symbols: ${{ mr.changed_symbols }}
+            mr_title: ${{ mr.title }}
+            # Findings in scope are an SDLC concern (gl_finding) available on a
+            # live GitLab / Orbit-Remote instance; passed through when present.
+            findings: ${{ mr.findings }}
+    output:
+      - recommended_action     # AUTO_APPROVE | REVIEW_REQUIRED | SENIOR_REVIEW | BLOCK
+      - overall_risk_level
+      - markdown
+
+  post_verdict:
+    name: Post verdict as MR comment
+    when:
+      - constellation.completed
+    steps:
+      - post_comment:
+          channel: merge_request
+          body: ${{ constellation.markdown }}
+
+  # Optional enforcement: when the Decision Gate blocks, request changes so the
+  # gate is an actual control rather than only a comment. (Deploy-time.)
+  enforce_gate:
+    name: Request changes when blocked
+    when:
+      - constellation.completed
+      - constellation.recommended_action == "BLOCK"
+    steps:
+      - request_changes:
+          channel: merge_request
+          body: |
+            Constellation Decision Gate: **BLOCK** — resolve the flagged risks
+            (see the analysis comment above) before this MR can merge.
+
+  notify_teams:
+    name: Alert affected areas on escalation
+    when:
+      - constellation.completed
+      - constellation.recommended_action in ["SENIOR_REVIEW", "BLOCK"]
+    steps:
+      - notify_slack: |
+          Channel: #eng-platform
+          Message: |
+            :warning: High-impact MR: ${{ mr.title }}
+            - Risk Level: ${{ constellation.overall_risk_level }}
+            - Decision: ${{ constellation.recommended_action }}
+            - Link: ${{ mr.web_url }}
+
+# Error handling
+on_error:
+  - log_failure: "Constellation failed: ${{ error.message }}"
+  - post_comment: "Constellation analysis failed. Manual review recommended."
+
+# Notes on what is real vs deferred at deploy:
+# - Real today: the four-lens composition, blended risk, and Decision Gate, run
+#   over a real Orbit index (validated by 5 integration tests).
+# - Deferred (needs live GitLab): the webhook trigger wiring, posting the
+#   comment, and SDLC enrichment (CODEOWNERS/git authorship, MR/author lineage
+#   edges, pipeline/approval compliance checks).

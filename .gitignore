@@ -1,0 +1,33 @@
+# Orbit binary — too large for GitHub (107 MB > 100 MB limit). Downloaded in CI instead.
+bin/orbit.exe
+bin/orbit
+
+# Orbit index / databases
+*.duckdb
+*.duckdb.wal
+.orbit/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Secrets / local config — never commit tokens
+.env
+.env.*
+*.pem
+*.key
+.netrc
+secrets.json
+secrets.yml
+secrets.yaml
+credentials.json
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
+*.tmp

@@ -1,0 +1,12 @@
+name: impact
+description: Compute blast radius for code changes
+version: "1.0"
+
+tools:
+  - orbit_query
+  - code_graph
+
+config:
+  timeout: 30
+  retry_count: 2
+  fail_on_error: true

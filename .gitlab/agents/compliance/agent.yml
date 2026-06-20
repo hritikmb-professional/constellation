@@ -1,0 +1,14 @@
+name: compliance
+description: Check compliance and policy violations
+version: "1.0"
+
+tools:
+  - orbit_query
+  - license_scanner
+  - policy_engine
+  - audit_log
+
+config:
+  timeout: 30
+  retry_count: 1
+  fail_on_error: false
