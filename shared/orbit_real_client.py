@@ -15,6 +15,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _to_int(value, default: int = 0) -> int:
+    """
+    Robustly coerce an Orbit cell value to int.
+
+    Orbit's table output renders SQL NULL (e.g. MAX(depth) over an empty set,
+    when a changed symbol has no callers) as an empty string. int('') raises,
+    so empty / None / non-numeric values fall back to `default`.
+    """
+    try:
+        s = str(value).strip()
+        return int(s) if s else default
+    except (TypeError, ValueError):
+        return default
+
+
 class RealOrbitClient:
     """
     Execute queries against a real Orbit Local database.
@@ -190,7 +205,7 @@ GROUP BY d.id, d.name;
         rows = self.query_raw(sql)
         return {
             "defs": [
-                {"id": r.get("id"), "name": r.get("name"), "inbound": int(r.get("inbound", 0) or 0)}
+                {"id": r.get("id"), "name": r.get("name"), "inbound": _to_int(r.get("inbound"))}
                 for r in rows
             ]
         }
@@ -289,9 +304,9 @@ LIMIT 1;
                 "fqn": r.get("fqn"),
                 "file_path": r.get("file_path"),
                 "definition_type": r.get("definition_type"),
-                "start_line": int(r.get("start_line", 0) or 0),
-                "end_line": int(r.get("end_line", 0) or 0),
-                "inbound_callers": int(r.get("inbound", 0) or 0),
+                "start_line": _to_int(r.get("start_line")),
+                "end_line": _to_int(r.get("end_line")),
+                "inbound_callers": _to_int(r.get("inbound")),
             }
         }
 
@@ -354,9 +369,9 @@ JOIN gl_definition d ON d.id = c.id;
         if results and len(results) > 0:
             r = results[0]
             return {
-                "total_dependents": int(r.get("total_dependents", 0)),
-                "affected_services": int(r.get("affected_services", 0)),
-                "max_depth": int(r.get("max_depth", 0)),
+                "total_dependents": _to_int(r.get("total_dependents")),
+                "affected_services": _to_int(r.get("affected_services")),
+                "max_depth": _to_int(r.get("max_depth")),
             }
         return {"total_dependents": 0, "affected_services": 0, "max_depth": 0}
 
@@ -403,7 +418,7 @@ ORDER BY affected_defs DESC;
                     "project_id": f"f{i + 1}",
                     "project_name": self._module_of(fp),
                     "full_path": fp,
-                    "affected_definitions": int(r.get("affected_defs", 0)),
+                    "affected_definitions": _to_int(r.get("affected_defs")),
                     "is_critical_path": self._is_critical_path(fp),
                 }
             )
@@ -429,7 +444,7 @@ ORDER BY affected_defs DESC;
                 continue
             mod = self._module_of(fp)
             agg = modules.setdefault(mod, {"defs": 0, "files": 0})
-            agg["defs"] += int(r.get("affected_defs", 0))
+            agg["defs"] += _to_int(r.get("affected_defs"))
             agg["files"] += 1
 
         ranked = sorted(modules.items(), key=lambda kv: kv[1]["defs"], reverse=True)
@@ -471,8 +486,8 @@ LIMIT 30;
                 {
                     "name": r.get("name"),
                     "definition_type": r.get("definition_type"),
-                    "inbound": int(r.get("inbound_calls", 0)),
-                    "outbound": int(r.get("outbound_calls", 0)),
+                    "inbound": _to_int(r.get("inbound_calls")),
+                    "outbound": _to_int(r.get("outbound_calls")),
                 }
                 for r in results
             ]
