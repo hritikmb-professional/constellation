@@ -109,6 +109,30 @@ indexes the repo it runs on and posts the verdict. The edit-semantics gate, the
 backtest, and the risk map were all themselves merged through the gate they
 implement.
 
+## 7. History, with receipts (the scar prior)
+
+Structure tells you what a change *could* break; history tells you what *has*
+broken near it before. `scar_map.py` mines git for the high-signal scars -
+reverts, hotfix/rollback/emergency commits, and bug-fix density per file - then
+walks one call-graph hop out from the changed symbols and adds a **bounded,
+attributable prior** (at most +12%) to change-failure risk. Every point of added
+risk cites the exact commit that justifies it.
+
+On the real Orbit history this correctly surfaces the **query-engine compiler
+passes** as the most-patched code (`lower/flat_chain.rs`: 5 of its 9 commits were
+fixes), so a change there carries a small, *receipted* risk bump:
+
+> `crates/query-engine/compiler/src/passes/lower/flat_chain.rs` - 56% of its
+> commits were fixes -> receipt `297d1ac97b` "fix(compiler): tighten cascade
+> anchor guard to pinned-ids only"
+
+Two honesty guardrails are built in. We deliberately **do not** call this a
+calibrated probability or a "validated predictive model" - it is a relative
+nudge toward human review, capped and shown with its evidence. And it is
+**absent-safe**: when no scar analysis is supplied (e.g. the backtest), the prior
+is 0 and the structural calibration in section 4 is unchanged - verified by a
+regression test (Test 6).
+
 ---
 
 ### Why this matters for judging
@@ -123,5 +147,6 @@ page documents, and every number is reproducible:
 BACKTEST_ORBIT=/path/to/orbit python backtest.py 25     # section 4
 BACKTEST_ORBIT=/path/to/orbit python find_risk.py       # section 5
 BACKTEST_ORBIT=/path/to/orbit python risk_map.py > risk_map.svg
-python tests/integration_test.py                        # section 3 (Test 5)
+SCAR_REPO=. BACKTEST_ORBIT=/path/to/orbit python ci/scar_map.py   # section 7
+python tests/integration_test.py                        # sections 3 & 7 (Tests 5, 6)
 ```

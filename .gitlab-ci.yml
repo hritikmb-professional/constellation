@@ -55,9 +55,12 @@ constellation:
     - python ci/run_ci.py
     # Repo risk map (orbit is on PATH, so risk_map.py's default binary works).
     - python risk_map.py > risk_map.svg || echo "risk map skipped"
+    # Scar map: production files most marked by past trouble, with commit receipts.
+    - python ci/scar_map.py > scar_map.txt || echo "scar map skipped"
   artifacts:
     when: always
     paths:
       - constellation_verdict.md
       - risk_map.svg
+      - scar_map.txt
     expire_in: 1 week

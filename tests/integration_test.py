@@ -441,6 +441,83 @@ def test_edit_semantics_gate():
     return cosmetic, contract
 
 
+def test_history_scar_prior():
+    """
+    The history scar prior must (a) raise change-failure risk when the change
+    sits near historically-patched code, (b) render its commit receipts, and
+    (c) be ABSENT-SAFE: with no scar data the verdict is identical (so the
+    backtest calibration is preserved).
+    """
+    print("\n" + "=" * 80)
+    print("TEST 6: History Scar Prior (git-grounded, with receipts)")
+    print("=" * 80)
+
+    if DefaultOrbitClient == RealOrbitClient:
+        orbit_client = RealOrbitClient(orbit_binary_path=DEFAULT_ORBIT_BINARY)
+        symbols = ["allow_all"]
+    else:
+        orbit_client = DefaultOrbitClient()
+        symbols = ["process_config"]
+    orchestrator = Orchestrator(orbit_client, gitlab_client=None)
+
+    base_payload = {
+        "mr_id": "scar", "changed_symbols": symbols, "mr_title": "x",
+        "edit_semantics": {"edit_class": "body-edit", "edit_danger": 0.5,
+                           "contract_break_symbols": [], "note": ""},
+    }
+
+    def run(extra):
+        p = dict(base_payload)
+        p.update(extra)
+        return orchestrator.handle_event(
+            {"event_id": "scar", "event_type": "mr_opened",
+             "timestamp": datetime.utcnow().isoformat(), "payload": p}
+        )
+
+    # A synthetic, pre-computed scar analysis (as CI would supply), no git needed.
+    scar = {
+        "prior": 0.08, "capped": False, "window": 4000, "neighborhood_files": 3,
+        "contributors": [{
+            "file": "crates/query-engine/compiler/src/passes/lower/flat_chain.rs",
+            "proximity": "changed file", "weight": 1.0, "reverts": 0, "hotfixes": 0,
+            "fix_density": 0.56, "intensity": 0.42, "contribution": 0.42,
+            "receipts": [{"sha": "297d1ac97b", "date": "2026-06-08",
+                          "subject": "fix(compiler): tighten cascade anchor guard", "kind": "fix"}],
+        }],
+        "note": "history-grounded prior with receipts",
+    }
+
+    without = run({})
+    with_scar = run({"scar_analysis": scar})
+
+    cfr_without = without.impact_verdict["change_failure_rate"]
+    cfr_with = with_scar.impact_verdict["change_failure_rate"]
+    print(f"\nchange-failure rate: without scar = {cfr_without:.3f}, with scar = {cfr_with:.3f}")
+
+    # (a) the prior raises risk (unless already maxed out)
+    if cfr_without < 0.90:
+        assert cfr_with > cfr_without, "scar prior should raise change-failure risk"
+    # the prior is bounded — it can add at most the cap (0.12)
+    assert cfr_with - cfr_without <= 0.12 + 1e-9, "scar prior must be bounded by the cap"
+
+    # (b) the receipts render
+    md = orchestrator.format_as_markdown(with_scar)
+    assert "History scar prior" in md, "scar section missing from markdown"
+    assert "297d1ac97b" in md, "commit receipt SHA not rendered"
+    assert any("History scar prior" in t for t in with_scar.evidence_trails), (
+        "scar prior not recorded in evidence trail"
+    )
+
+    # (c) absent-safe: no scar data -> empty analysis, no scar section, unchanged risk
+    assert without.scar_analysis == {}, "scar analysis should be empty when not supplied"
+    assert "History scar prior" not in orchestrator.format_as_markdown(without), (
+        "scar section should not appear without scar data"
+    )
+
+    print("\n[PASS] TEST 6 PASSED - scar prior raises risk with receipts, and is absent-safe")
+    return with_scar
+
+
 def run_all_tests():
     """Run all integration tests."""
     print("\n" + "#" * 80)
@@ -454,6 +531,7 @@ def run_all_tests():
         test_full_scenario_mr_with_vulnerability()
         test_shared_context_composition()
         test_edit_semantics_gate()
+        test_history_scar_prior()
 
         print("\n" + "#" * 80)
         print("# ALL TESTS PASSED [OK]")

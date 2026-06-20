@@ -53,11 +53,16 @@ class ComposedVerdict:
     edit_signatures: Dict[str, Any] = None   # {name: {"before","after"}}
     edit_files: List[str] = None
     callers_to_review: List[Dict[str, Any]] = None   # direct callers for a contract break
+    # History-grounded scar prior (git reverts/hotfixes/fix-density near the
+    # change), with receipts. Supplied by CI; empty when not computed.
+    scar_analysis: Dict[str, Any] = None
     evidence_trails: List[str] = None
 
     def __post_init__(self):
         if self.evidence_trails is None:
             self.evidence_trails = []
+        if self.scar_analysis is None:
+            self.scar_analysis = {}
         if self.contract_break_symbols is None:
             self.contract_break_symbols = []
         if self.edit_signatures is None:
@@ -123,6 +128,12 @@ class Orchestrator:
         composed.edit_signatures = dict(edit.get("signatures", {}) or {})
         composed.edit_files = list(edit.get("files", []) or [])
 
+        # Capture the history scar prior (if CI computed one) and make it available
+        # to the Impact agent's change-failure prediction.
+        composed.scar_analysis = payload.get("scar_analysis") or {}
+        if composed.scar_analysis and "scar_prior" not in payload:
+            payload["scar_prior"] = float(composed.scar_analysis.get("prior", 0.0))
+
         # For a contract change, fetch the direct callers to review (the worklist).
         if composed.contract_break_symbols and self.orbit_client:
             try:
@@ -168,6 +179,16 @@ class Orchestrator:
             f"{len(impact_result.affected_services)} services"
         )
         logger.info(f"Orchestrator: Impact found {impact_result.total_dependents} dependents")
+
+        # Record the history scar prior in the evidence trail (with receipts count).
+        scar = verdict.scar_analysis or {}
+        if scar.get("prior", 0) > 0:
+            n_recv = sum(len(c.get("receipts", [])) for c in scar.get("contributors", []))
+            verdict.evidence_trails.append(
+                f"History scar prior: +{scar['prior']:.0%} change-failure risk from "
+                f"{len(scar.get('contributors', []))} historically-patched file(s) near the "
+                f"change, backed by {n_recv} commit receipt(s)"
+            )
 
         subgraph = self.impact_agent.last_subgraph
 
@@ -444,6 +465,37 @@ class Orchestrator:
         lines.append("\n_Advisory: points at the caller function - the graph has no per-call-site line, so verify the exact argument list._\n\n---\n")
         return "\n".join(lines) + "\n"
 
+    def _render_scars(self, verdict: "ComposedVerdict") -> str:
+        """History-grounded risk: the scarred neighborhood and the commit receipts."""
+        scar = verdict.scar_analysis or {}
+        contribs = scar.get("contributors", [])
+        if not contribs or scar.get("prior", 0) <= 0:
+            return ""
+
+        cap = " (capped)" if scar.get("capped") else ""
+        lines = [
+            "## History scar prior",
+            f"Beyond the code's structure, git history shows code **near this change** has "
+            f"needed fixing before. That adds **+{scar['prior']:.0%}**{cap} to change-failure "
+            f"risk (bounded; a nudge toward review, not a verdict on its own). Receipts:",
+            "",
+        ]
+        for c in contribs[:4]:
+            dens = f"{c.get('fix_density', 0):.0%} of its commits were fixes"
+            rev = f", {c['reverts']} revert(s)" if c.get("reverts") else ""
+            hf = f", {c['hotfixes']} hotfix(es)" if c.get("hotfixes") else ""
+            lines.append(
+                f"- `{c['file']}` _({c.get('proximity', '')}, scar intensity "
+                f"{c.get('intensity', 0):.2f})_ - {dens}{rev}{hf}"
+            )
+            for r in c.get("receipts", [])[:2]:
+                lines.append(f"    - [{r.get('kind', 'fix')}] `{r.get('sha', '')}` {r.get('date', '')} - {r.get('subject', '')}")
+        lines.append(
+            "\n_History-grounded prior: a bounded, attributable nudge from real commits "
+            "(reverts / hotfixes / fix-density) - not a calibrated probability._\n\n---\n"
+        )
+        return "\n".join(lines) + "\n"
+
     def format_as_markdown(self, verdict: ComposedVerdict) -> str:
         """Format composed verdict as GitLab markdown."""
         action_labels = {
@@ -516,6 +568,9 @@ Confidence: {impact_data['confidence']:.0%}
 ---
 
 """
+
+        # History scar prior (git reverts/hotfixes/fix-density near the change).
+        md += self._render_scars(verdict)
 
         # Add Ownership section if available
         if verdict.ownership_verdict:

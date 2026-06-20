@@ -178,13 +178,17 @@ class ImpactAgent:
         if chokepoints:
             logger.info(f"Impact: {len(chokepoints)} structural chokepoints in blast radius")
 
-        # Query 5: Predict change-failure rate (structural, real-signal heuristic)
+        # Query 5: Predict change-failure rate (structural, real-signal heuristic).
+        # An optional history-grounded scar prior (computed in CI from git) folds
+        # in here; it defaults to 0 when not supplied (e.g. the backtest), leaving
+        # the structural-only calibration unchanged.
         failure_rate = self._predict_change_failure_rate(
             affected_services,
             changed_symbols,
             keystones,
             total_dependents=dependents.get("total_dependents", 0),
             chokepoints=chokepoints,
+            scar_prior=float(mr_event.get("scar_prior", 0.0)),
         )
         logger.info(f"Impact: predicted failure rate = {failure_rate:.2f}")
 
@@ -461,20 +465,23 @@ class ImpactAgent:
         keystones: List[KeystoneSymbol] = None,
         total_dependents: int = 0,
         chokepoints: List["Chokepoint"] = None,
+        scar_prior: float = 0.0,
     ) -> float:
         """
-        Estimate change-failure rate as a transparent STRUCTURAL HEURISTIC
-        (not a learned or historical model). It is a weighted sum of real
-        signals from this change, each clearly attributable:
+        Estimate change-failure rate as a transparent weighted sum of real,
+        attributable signals from this change (not a learned model):
 
             base                         0.05
           + keystone exposure            0.06 per keystone (capped at 0.18)
           + blast-radius magnitude       0.15 (>=300) / 0.10 (>=100) / 0.05 (>=25)
           + structural chokepoint        0.08 if a CHANGED symbol is a cut vertex
           + critical-path file touched   0.05
+          + history scar prior           up to 0.12 (git reverts/hotfixes/fix-density
+                                         near the change; supplied by CI, 0 otherwise)
 
-        Every term maps to a concrete, inspectable property of the change, so
-        the number is defensible and reproducible — not an opaque constant.
+        The first four terms are STRUCTURAL (read from the current graph); the
+        scar prior is HISTORICAL (read from git) and arrives pre-computed and
+        capped, with its receipts, so the number stays defensible and reproducible.
         """
         logger.info("Impact: predicting change-failure rate")
         keystones = keystones or []
@@ -495,6 +502,9 @@ class ImpactAgent:
 
         if any(s.is_critical_path for s in affected_services):
             score += 0.05
+
+        # History-grounded prior (already bounded to <= 0.12 by the scar map).
+        score += max(0.0, min(0.12, float(scar_prior)))
 
         return min(score, 0.90)
 

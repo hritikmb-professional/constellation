@@ -26,6 +26,7 @@ from orbit_real_client import RealOrbitClient   # noqa: E402
 from orchestrator import Orchestrator           # noqa: E402
 from changed_symbols import changed_symbols      # noqa: E402
 from edit_semantics import classify_changes      # noqa: E402
+from scar_map import compute_scar_prior          # noqa: E402
 from gitlab_post import post_or_update_verdict   # noqa: E402
 
 
@@ -63,11 +64,23 @@ def main() -> int:
             post_or_update_verdict(md)
         return 0
 
+    # History-grounded scar prior: mine git for reverts/hotfixes/fix-density near
+    # the change (bounded, with receipts). Best-effort - never block the verdict
+    # on a git/history hiccup.
+    try:
+        scar = compute_scar_prior(client, symbols, repo=".")
+        print(f"Scar prior: +{scar['prior']:.0%} from {len(scar.get('contributors', []))} "
+              f"scarred file(s) near the change")
+    except Exception as e:
+        print(f"[!] scar prior skipped ({e})")
+        scar = {}
+
     payload = {
         "mr_id": os.environ.get("CI_MERGE_REQUEST_IID", "local"),
         "changed_symbols": symbols,
         "mr_title": os.environ.get("CI_MERGE_REQUEST_TITLE", ""),
         "edit_semantics": edit,
+        "scar_analysis": scar,
     }
 
     # The Provenance lens answers "where does THIS vulnerability reach?" so it
