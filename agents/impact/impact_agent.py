@@ -334,7 +334,11 @@ class ImpactAgent:
         seen_names: set = set()
         for c in candidates:
             info = names.get(c["node"], {})
-            name = info.get("name") or str(c["node"])
+            name = info.get("name")
+            # Skip graph nodes with no gl_definition row (imported/external
+            # symbols) — a chokepoint must be a named definition, never a raw id.
+            if not name:
+                continue
             # Same name can appear as several definitions; keep the highest-impact.
             if name in seen_names:
                 continue
