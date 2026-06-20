@@ -17,6 +17,17 @@ import subprocess
 from typing import Dict, Set, List
 
 
+# When Constellation is vendored INTO a host repo (e.g. constellation/ inside a
+# fork), its own files must never be analyzed as "changed code" — they're the
+# tool, not the codebase under review. Skip anything under these prefixes.
+_SELF_PREFIXES = ("constellation/",)
+
+
+def _is_self(path: str) -> bool:
+    p = path.replace("\\", "/").lstrip("./")
+    return any(p.startswith(pre) for pre in _SELF_PREFIXES)
+
+
 def _run(cmd: List[str]) -> str:
     return subprocess.run(cmd, capture_output=True, text=True).stdout
 
@@ -29,6 +40,9 @@ def changed_lines_by_file(base_sha: str, head: str = "HEAD") -> Dict[str, Set[in
     for line in diff.splitlines():
         if line.startswith("+++ b/"):
             current = line[6:].strip()
+            if _is_self(current):
+                current = None   # skip the tool's own vendored files
+                continue
             files.setdefault(current, set())
         elif line.startswith("@@") and current is not None:
             # @@ -a,b +c,d @@  -> new-side starts at c, spans d lines

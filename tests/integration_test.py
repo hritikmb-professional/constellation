@@ -388,6 +388,59 @@ def test_shared_context_composition():
     return composed
 
 
+def test_edit_semantics_gate():
+    """
+    The fix for the headline false positive: the SAME central symbol must get a
+    DIFFERENT verdict depending on what the edit actually does. A comment must
+    de-escalate; a contract change must escalate.
+    """
+    print("\n" + "=" * 80)
+    print("TEST 5: Edit-Semantics Gate (what changed, not just where)")
+    print("=" * 80)
+
+    if DefaultOrbitClient == RealOrbitClient:
+        orbit_client = RealOrbitClient(orbit_binary_path=DEFAULT_ORBIT_BINARY)
+        symbols = ["allow_all", "compile"]
+    else:
+        orbit_client = DefaultOrbitClient()
+        symbols = ["process_config"]
+    orchestrator = Orchestrator(orbit_client, gitlab_client=None)
+
+    def verdict_for(edit_class, danger, cb):
+        ev = {
+            "event_id": "gate", "event_type": "mr_opened",
+            "timestamp": datetime.utcnow().isoformat(),
+            "payload": {
+                "mr_id": "gate", "changed_symbols": symbols, "mr_title": "x",
+                "edit_semantics": {
+                    "edit_class": edit_class, "edit_danger": danger,
+                    "contract_break_symbols": cb, "note": "",
+                },
+            },
+        }
+        return orchestrator.handle_event(ev)
+
+    cosmetic = verdict_for("cosmetic", 0.0, [])
+    contract = verdict_for("contract-break", 1.0, symbols)
+    print(f"\ncosmetic -> {cosmetic.recommended_action} ({cosmetic.overall_risk_level})")
+    print(f"contract-break -> {contract.recommended_action} ({contract.overall_risk_level})")
+
+    if DefaultOrbitClient == RealOrbitClient:
+        # The whole point: a comment on a keystone must NOT block.
+        assert cosmetic.recommended_action == "AUTO_APPROVE", (
+            f"cosmetic edit on a keystone should AUTO_APPROVE, got {cosmetic.recommended_action}"
+        )
+        assert contract.recommended_action in ("BLOCK", "SENIOR_REVIEW"), (
+            f"contract change should escalate, got {contract.recommended_action}"
+        )
+        assert cosmetic.recommended_action != contract.recommended_action, (
+            "same symbol must get different verdicts by edit class"
+        )
+
+    print("\n[PASS] TEST 5 PASSED — verdict is gated by what changed, not just centrality")
+    return cosmetic, contract
+
+
 def run_all_tests():
     """Run all integration tests."""
     print("\n" + "#" * 80)
@@ -400,6 +453,7 @@ def run_all_tests():
         test_orchestrator_composition()
         test_full_scenario_mr_with_vulnerability()
         test_shared_context_composition()
+        test_edit_semantics_gate()
 
         print("\n" + "#" * 80)
         print("# ALL TESTS PASSED [OK]")

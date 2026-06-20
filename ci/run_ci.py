@@ -25,6 +25,7 @@ for sub in ("shared", "agents/impact", "agents/provenance", "agents/ownership",
 from orbit_real_client import RealOrbitClient   # noqa: E402
 from orchestrator import Orchestrator           # noqa: E402
 from changed_symbols import changed_symbols      # noqa: E402
+from edit_semantics import classify_changes      # noqa: E402
 from gitlab_post import post_or_update_verdict   # noqa: E402
 
 
@@ -50,6 +51,11 @@ def main() -> int:
     symbols = changed_symbols(client, base)
     print(f"Changed symbols ({len(symbols)}): {symbols}")
 
+    # Classify WHAT changed (cosmetic / body-edit / contract-break) so risk is
+    # gated by the edit, not just the centrality of the symbol touched.
+    edit = classify_changes(base)
+    print(f"Edit class: {edit['edit_class']} (danger {edit['edit_danger']}) — {edit['note']}")
+
     if not symbols:
         md = ("## Constellation\n\nNo code definitions changed in this MR "
               "(or none resolved to the indexed graph). Nothing to analyze.")
@@ -57,14 +63,33 @@ def main() -> int:
             post_or_update_verdict(md)
         return 0
 
+    payload = {
+        "mr_id": os.environ.get("CI_MERGE_REQUEST_IID", "local"),
+        "changed_symbols": symbols,
+        "mr_title": os.environ.get("CI_MERGE_REQUEST_TITLE", ""),
+        "edit_semantics": edit,
+    }
+
+    # The Provenance lens answers "where does THIS vulnerability reach?" so it
+    # only runs when a security finding is attached. Real findings come from a
+    # GitLab security scan at deploy. For a demo, CONSTELLATION_DEMO_FINDING=1
+    # attaches a CLEARLY-ILLUSTRATIVE finding on the top changed symbol so all
+    # four lenses appear; the exposure it computes is real (it reuses Impact's
+    # subgraph), only the finding itself is a demo input — labeled as such.
+    if os.environ.get("CONSTELLATION_DEMO_FINDING") == "1" and symbols:
+        target = symbols[0]
+        payload["findings"] = [{
+            "finding_id": "DEMO (illustrative — not a real vulnerability)",
+            "title": f"Illustrative finding on `{target}` to exercise the Provenance lens",
+            "severity": "HIGH",
+            "cvss_score": 0.0,
+            "affected_symbol": target,
+        }]
+
     event = {
         "event_id": os.environ.get("CI_MERGE_REQUEST_IID", "local"),
         "event_type": "mr_opened",
-        "payload": {
-            "mr_id": os.environ.get("CI_MERGE_REQUEST_IID", "local"),
-            "changed_symbols": symbols,
-            "mr_title": os.environ.get("CI_MERGE_REQUEST_TITLE", ""),
-        },
+        "payload": payload,
     }
 
     orchestrator = Orchestrator(client, gitlab_client=None)

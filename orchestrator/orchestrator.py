@@ -44,11 +44,19 @@ class ComposedVerdict:
     overall_risk_level: str = "UNKNOWN"  # LOW, MEDIUM, HIGH, CRITICAL
     recommended_action: str = "REVIEW_REQUIRED"  # AUTO_APPROVE, REVIEW_REQUIRED, SENIOR_REVIEW, BLOCK
     action_reason: str = ""
+    # Edit-semantics gate: how dangerous the actual change is, independent of how
+    # central the touched code is. 1.0 = no gating (unknown / not supplied).
+    edit_danger: float = 1.0
+    edit_class: str = ""
+    edit_note: str = ""
+    contract_break_symbols: List[str] = None
     evidence_trails: List[str] = None
 
     def __post_init__(self):
         if self.evidence_trails is None:
             self.evidence_trails = []
+        if self.contract_break_symbols is None:
+            self.contract_break_symbols = []
 
 
 class Orchestrator:
@@ -96,6 +104,13 @@ class Orchestrator:
             event_type=event_type,
             timestamp=event.get("timestamp", ""),
         )
+
+        # Capture the edit-semantics gate (what changed), if CI supplied it.
+        edit = payload.get("edit_semantics") or {}
+        composed.edit_danger = float(edit.get("edit_danger", 1.0))
+        composed.edit_class = edit.get("edit_class", "")
+        composed.edit_note = edit.get("note", "")
+        composed.contract_break_symbols = list(edit.get("contract_break_symbols", []) or [])
 
         # Route to handlers
         if "merge_request.opened" in event_type or event_type == "mr_opened":
@@ -243,18 +258,25 @@ class Orchestrator:
         avg_risk = sum(risk_scores) / len(risk_scores)
         blended_risk = 0.6 * peak_risk + 0.4 * avg_risk
 
-        if blended_risk >= 0.80:
+        # Edit-semantics gate: scale the topology risk by how dangerous the
+        # actual change is. A provably-cosmetic edit (danger 0) collapses risk to
+        # ~0 no matter how central the code is — killing the "comment on a
+        # keystone => BLOCK" false positive; a contract-breaking edit (1.0)
+        # keeps full risk. Default danger 1.0 leaves behavior unchanged.
+        gated_risk = blended_risk * verdict.edit_danger
+
+        if gated_risk >= 0.80:
             verdict.overall_risk_level = "CRITICAL"
-        elif blended_risk >= 0.60:
+        elif gated_risk >= 0.60:
             verdict.overall_risk_level = "HIGH"
-        elif blended_risk >= 0.40:
+        elif gated_risk >= 0.40:
             verdict.overall_risk_level = "MEDIUM"
         else:
             verdict.overall_risk_level = "LOW"
 
         logger.info(
             f"Orchestrator: overall risk = {verdict.overall_risk_level} "
-            f"(blended {blended_risk:.2f}, peak {peak_risk:.2f})"
+            f"(gated {gated_risk:.2f} = blended {blended_risk:.2f} x edit_danger {verdict.edit_danger:.2f})"
         )
 
     def _compute_decision_gate(self, verdict: ComposedVerdict):
@@ -274,13 +296,17 @@ class Orchestrator:
             keystones = verdict.impact_verdict.get("keystone_symbols") or []
             confidence = verdict.impact_verdict.get("confidence", 0.0)
 
+        # A keystone only forces senior review when the EDIT could actually
+        # affect it — a cosmetic change to a keystone shouldn't escalate.
+        keystone_escalates = bool(keystones) and verdict.edit_danger >= 0.5
+
         if level == "CRITICAL":
             action, reason = "BLOCK", "Critical risk: do not merge without sign-off."
-        elif level == "HIGH" or keystones:
+        elif level == "HIGH" or keystone_escalates:
             action = "SENIOR_REVIEW"
             reason = (
                 "Keystone single-point-of-failure touched; senior review required."
-                if keystones
+                if keystone_escalates
                 else "High blast radius; senior reviewer required."
             )
         elif level == "MEDIUM":
@@ -315,6 +341,29 @@ class Orchestrator:
 ---
 
 """
+
+        # Edit analysis — what changed, which gated the verdict (not just centrality).
+        if verdict.edit_class:
+            label = {
+                "cosmetic": "[OK] Cosmetic — comments/whitespace only",
+                "body-edit": "[~] Body edit — internal logic changed (signature intact)",
+                "contract-break": "[X] Contract change — signature/return/deletion",
+                "unknown": "[?] Change class undetermined",
+            }.get(verdict.edit_class, verdict.edit_class)
+            md += f"""## Change Analysis
+**Edit class:** {label}  (risk gated x{verdict.edit_danger:g})
+{verdict.edit_note}
+
+"""
+            if verdict.contract_break_symbols:
+                md += (
+                    "Contract changed for: "
+                    + ", ".join(f"`{s}`" for s in verdict.contract_break_symbols)
+                    + " — callers may need updating.\n\n"
+                )
+            if verdict.edit_class == "cosmetic":
+                md += "_Risk de-escalated: the change cannot affect dependents, regardless of how central this code is._\n\n"
+            md += "---\n\n"
 
         # Add Impact section if available
         if verdict.impact_verdict:
