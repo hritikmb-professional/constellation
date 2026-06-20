@@ -31,3 +31,7 @@ credentials.json
 Thumbs.db
 *.log
 *.tmp
+
+# stray debug capture files
+err.txt
+out.json
