@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 650" font-family="Segoe UI,Arial,sans-serif">
+<rect width="860" height="650" fill="#0d1117"/>
+<text x="20" y="30" fill="#e6edf3" font-size="20" font-weight="700">Constellation - Repo Risk Map</text>
+<text x="20" y="52" fill="#8b949e" font-size="13">Most-called production functions - bar = fan-in - <tspan fill="#f85149">red = no test directly exercises it</tspan> (12 of 18 untested)</text>
+<text x="220" y="89" fill="#c9d1d9" font-size="13" text-anchor="end">compile</text>
+<rect x="230" y="76" width="570" height="16" rx="3" fill="#3fb950" opacity="0.9"/>
+<text x="808" y="89" fill="#8b949e" font-size="12">176 callers  - 171 tests</text>
+<text x="220" y="119" fill="#c9d1d9" font-size="13" text-anchor="end">prefixed_table_name</text>
+<rect x="230" y="106" width="68" height="16" rx="3" fill="#3fb950" opacity="0.9"/>
+<text x="306" y="119" fill="#8b949e" font-size="12">21 callers  - 1 tests</text>
+<text x="220" y="149" fill="#c9d1d9" font-size="13" text-anchor="end">write_schema_version</text>
+<rect x="230" y="136" width="51" height="16" rx="3" fill="#3fb950" opacity="0.9"/>
+<text x="289" y="149" fill="#8b949e" font-size="12">16 callers  - 15 tests</text>
+<text x="220" y="179" fill="#c9d1d9" font-size="13" text-anchor="end">meter</text>
+<rect x="230" y="166" width="48" height="16" rx="3" fill="#f85149" opacity="0.9"/>
+<text x="286" y="179" fill="#8b949e" font-size="12">15 callers  - 0 tests</text>
+<text x="220" y="209" fill="#c9d1d9" font-size="13" text-anchor="end">hir_def_to_definition_site</text>
+<rect x="230" y="196" width="45" height="16" rx="3" fill="#f85149" opacity="0.9"/>
+<text x="283" y="209" fill="#8b949e" font-size="12">14 callers  - 0 tests</text>
+<text x="220" y="239" fill="#c9d1d9" font-size="13" text-anchor="end">evaluate_value</text>
+<rect x="230" y="226" width="42" height="16" rx="3" fill="#f85149" opacity="0.9"/>
+<text x="280" y="239" fill="#8b949e" font-size="12">13 callers  - 0 tests</text>
+<text x="220" y="269" fill="#c9d1d9" font-size="13" text-anchor="end">ensure_version_table</text>
+<rect x="230" y="256" width="42" height="16" rx="3" fill="#3fb950" opacity="0.9"/>
+<text x="280" y="269" fill="#8b949e" font-size="12">13 callers  - 12 tests</text>
+<text x="220" y="299" fill="#c9d1d9" font-size="13" text-anchor="end">id_list_predicate</text>
+<rect x="230" y="286" width="38" height="16" rx="3" fill="#f85149" opacity="0.9"/>
+<text x="276" y="299" fill="#8b949e" font-size="12">12 callers  - 0 tests</text>
+<text x="220" y="329" fill="#c9d1d9" font-size="13" text-anchor="end">deleted_false</text>
+<rect x="230" y="316" width="38" height="16" rx="3" fill="#f85149" opacity="0.9"/>
+<text x="276" y="329" fill="#8b949e" font-size="12">12 callers  - 0 tests</text>
+<text x="220" y="359" fill="#c9d1d9" font-size="13" text-anchor="end">create_router</text>
+<rect x="230" y="346" width="38" height="16" rx="3" fill="#3fb950" opacity="0.9"/>
+<text x="276" y="359" fill="#8b949e" font-size="12">12 callers  - 11 tests</text>
+<text x="220" y="389" fill="#c9d1d9" font-size="13" text-anchor="end">require</text>
+<rect x="230" y="376" width="35" height="16" rx="3" fill="#f85149" opacity="0.9"/>
+<text x="273" y="389" fill="#8b949e" font-size="12">11 callers  - 0 tests</text>
+<text x="220" y="419" fill="#c9d1d9" font-size="13" text-anchor="end">batch_err</text>
+<rect x="230" y="406" width="35" height="16" rx="3" fill="#f85149" opacity="0.9"/>
+<text x="273" y="419" fill="#8b949e" font-size="12">11 callers  - 0 tests</text>
+<text x="220" y="449" fill="#c9d1d9" font-size="13" text-anchor="end">default_name</text>
+<rect x="230" y="436" width="32" height="16" rx="3" fill="#f85149" opacity="0.9"/>
+<text x="270" y="449" fill="#8b949e" font-size="12">10 callers  - 0 tests</text>
+<text x="220" y="479" fill="#c9d1d9" font-size="13" text-anchor="end">sql_lit</text>
+<rect x="230" y="466" width="32" height="16" rx="3" fill="#f85149" opacity="0.9"/>
+<text x="270" y="479" fill="#8b949e" font-size="12">10 callers  - 0 tests</text>
+<text x="220" y="509" fill="#c9d1d9" font-size="13" text-anchor="end">child_parts</text>
+<rect x="230" y="496" width="29" height="16" rx="3" fill="#f85149" opacity="0.9"/>
+<text x="267" y="509" fill="#8b949e" font-size="12">9 callers  - 0 tests</text>
+<text x="220" y="539" fill="#c9d1d9" font-size="13" text-anchor="end">extract_request_context</text>
+<rect x="230" y="526" width="29" height="16" rx="3" fill="#f85149" opacity="0.9"/>
+<text x="267" y="539" fill="#8b949e" font-size="12">9 callers  - 0 tests</text>
+<text x="220" y="569" fill="#c9d1d9" font-size="13" text-anchor="end">run_if_needed</text>
+<rect x="230" y="556" width="29" height="16" rx="3" fill="#3fb950" opacity="0.9"/>
+<text x="267" y="569" fill="#8b949e" font-size="12">9 callers  - 8 tests</text>
+<text x="220" y="599" fill="#c9d1d9" font-size="13" text-anchor="end">siphon_deleted_column</text>
+<rect x="230" y="586" width="29" height="16" rx="3" fill="#f85149" opacity="0.9"/>
+<text x="267" y="599" fill="#8b949e" font-size="12">9 callers  - 0 tests</text>
+</svg>

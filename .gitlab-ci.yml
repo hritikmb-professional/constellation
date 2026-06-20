@@ -53,8 +53,11 @@ constellation:
       "${ORBIT_BIN}" sql "SELECT COUNT(*) FROM gl_definition"
   script:
     - python ci/run_ci.py
+    # Repo risk map (orbit is on PATH, so risk_map.py's default binary works).
+    - python risk_map.py > risk_map.svg || echo "risk map skipped"
   artifacts:
     when: always
     paths:
       - constellation_verdict.md
+      - risk_map.svg
     expire_in: 1 week
