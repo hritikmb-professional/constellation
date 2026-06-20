@@ -1,20 +1,19 @@
 # Constellation — merge-request analysis pipeline (deployment Path B).
 #
-# On every merge request, this job indexes the repo with Orbit, runs the
-# four-lens orchestrator over the changed symbols, and posts the verdict as an
-# MR comment (and can fail the pipeline when the Decision Gate says BLOCK).
+# On every merge request, this job downloads Orbit (Linux), indexes the repo,
+# runs the four-lens orchestrator over the changed symbols, and posts the
+# verdict as an MR comment. It can also fail the pipeline when the Decision
+# Gate returns BLOCK, making the gate a real merge control.
 #
-# Required CI/CD variables (Settings -> CI/CD -> Variables):
-#   CONSTELLATION_TOKEN   project access token, `api` scope, Reporter+  (masked, protected)
-#   ORBIT_DOWNLOAD_URL    URL of the Linux x86_64 Orbit binary           (see note below)
+# Required CI/CD variable (Settings -> CI/CD -> Variables):
+#   CONSTELLATION_TOKEN   project access token, `api` scope, Reporter+ role
+#                         (set it Masked + Protected; never commit it)
 # Optional:
-#   CONSTELLATION_ENFORCE set to "1" to make a BLOCK verdict fail the pipeline (a real gate)
+#   CONSTELLATION_ENFORCE = "1"   -> a BLOCK verdict fails the pipeline
+#   ORBIT_VERSION                 -> pin a different Orbit release
 #
-# NOTE: ORBIT_DOWNLOAD_URL is the one external dependency to confirm — it must
-# point at the *Linux* Orbit binary (the bundled bin/orbit.exe is Windows-only
-# and is intentionally git-ignored). If Orbit Local is not available for Linux
-# CI, the job degrades to the mock backend (clearly-labeled) so the pipeline
-# still demonstrates the end-to-end loop.
+# The Orbit binary is downloaded at job time (verified by SHA256). The bundled
+# bin/orbit.exe is Windows-only and intentionally git-ignored.
 
 stages:
   - analyze
@@ -25,20 +24,27 @@ constellation:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   variables:
-    GIT_DEPTH: "0"            # full history so the MR diff base is reachable
+    GIT_DEPTH: "0"                 # full history so the MR diff base is reachable
     ORBIT_BIN: "/usr/local/bin/orbit"
+    ORBIT_VERSION: "0.75.1"        # matches the validated schema; bump to track latest
+    ORBIT_PROJECT_ID: "77960826"   # gitlab-org/orbit/knowledge-graph
   before_script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl git ca-certificates
+    # libstdc++6 is the one runtime dep the slim image lacks for the glibc build.
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates tar git libstdc++6
     - |
-      if [ -n "$ORBIT_DOWNLOAD_URL" ]; then
-        echo "Downloading Orbit (Linux) ..."
-        curl -fsSL "$ORBIT_DOWNLOAD_URL" -o "$ORBIT_BIN" && chmod +x "$ORBIT_BIN"
-        "$ORBIT_BIN" --version || echo "WARN: orbit --version failed"
-        echo "Indexing repo with Orbit ..."
-        "$ORBIT_BIN" index . || echo "WARN: orbit index failed; will fall back to mock"
-      else
-        echo "ORBIT_DOWNLOAD_URL not set — running with mock Orbit backend (loop demo only)."
-      fi
+      set -e
+      ART="orbit-local-linux-x86_64.tar.gz"
+      BASE="https://gitlab.com/api/v4/projects/${ORBIT_PROJECT_ID}/packages/generic/orbit-local/${ORBIT_VERSION}"
+      echo "Downloading Orbit ${ORBIT_VERSION} (Linux x86_64)..."
+      curl -fsSL "${BASE}/${ART}" -o orbit.tgz
+      curl -fsSL "${BASE}/${ART}.sha256" -o orbit.sha256
+      echo "$(awk '{print $1}' orbit.sha256)  orbit.tgz" | sha256sum -c -
+      tar xzf orbit.tgz
+      install -m 0755 orbit "${ORBIT_BIN}"
+      "${ORBIT_BIN}" --version
+      echo "Indexing repository with Orbit..."
+      "${ORBIT_BIN}" index .
+      "${ORBIT_BIN}" sql "SELECT COUNT(*) FROM gl_definition"
   script:
     - python ci/run_ci.py
   artifacts:
