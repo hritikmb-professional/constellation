@@ -87,6 +87,8 @@ class BlastRadiusVerdict:
     confidence_reasons: List[str]
     keystone_symbols: List[KeystoneSymbol] = field(default_factory=list)
     chokepoints: List[Chokepoint] = field(default_factory=list)
+    test_dependents: int = 0          # dependents in test files (by path)
+    production_dependents: int = 0     # dependents in production files
 
 
 @dataclass
@@ -129,6 +131,8 @@ class ImpactAgent:
         self.last_subgraph: "MaterializedSubgraph" = None
         # Cached PageRank rank map (computed once per agent, on first need).
         self._pagerank_ranks = None
+        # (test_dependents, production_dependents) from the last services query.
+        self._last_split = (0, 0)
 
     def analyze_mr(self, mr_event: Dict[str, Any]) -> BlastRadiusVerdict:
         """
@@ -198,6 +202,8 @@ class ImpactAgent:
             confidence_reasons=reasons,
             keystone_symbols=keystones,
             chokepoints=chokepoints,
+            test_dependents=self._last_split[0],
+            production_dependents=self._last_split[1],
         )
 
         # Materialize the subgraph once so downstream lenses can consume it
@@ -398,6 +404,11 @@ class ImpactAgent:
         if self.orbit_client and changed_symbols:
             result = self.orbit_client.query("affected_services", symbols=changed_symbols)
             items = result.get("affected_services", []) if result else []
+            # Capture the test/production split (computed over ALL affected files).
+            self._last_split = (
+                int(result.get("test_dependents", 0)),
+                int(result.get("production_dependents", 0)),
+            )
             services = [
                 AffectedService(
                     project_id=str(it.get("project_id", "")),

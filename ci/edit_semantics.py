@@ -71,16 +71,14 @@ def _file_is_cosmetic(base: str, head: str, path: str) -> bool:
     return _strip_comments_ws(old, ext) == _strip_comments_ws(new, ext)
 
 
-def _extract_signature(content: str, name: str):
+def _signature_text(content: str, name: str):
     """
-    Extract a function's normalized signature by NAME (params + return), spanning
-    a possibly multi-line parameter list to its matching close paren. Returns None
-    if the function isn't found. Name-based so it needs no old/new line spans.
+    The raw signature text of a function by NAME (name..matching close paren +
+    return type), spanning a possibly multi-line param list. None if not found.
     """
     m = re.search(r"\b(?:fn|def|function)\s+" + re.escape(name) + r"\s*[(<]", content)
     if not m:
         return None
-    # Find the param-list open paren at/after the match, then its matching close.
     open_idx = content.find("(", m.start())
     if open_idx == -1:
         return None
@@ -95,31 +93,46 @@ def _extract_signature(content: str, name: str):
                 break
         j += 1
     sig = content[m.start():j + 1]
-    # include the return type up to the body/terminator
     tail = content[j + 1:j + 200].split("{")[0].split(":")[0].split(";")[0]
-    return re.sub(r"\s+", "", sig + tail)
+    return sig + tail
 
 
-def _contract_break_symbols(base: str, head: str, files: List[str], names: List[str]) -> Set[str]:
+def _norm(s):
+    return re.sub(r"\s+", "", s) if s is not None else None
+
+
+def _readable(s):
+    return re.sub(r"\s+", " ", s).strip() if s is not None else None
+
+
+def _extract_signature(content: str, name: str):
+    """Whitespace-normalized signature for equality comparison (None if absent)."""
+    return _norm(_signature_text(content, name))
+
+
+def _contract_break_symbols(base: str, head: str, files: List[str], names: List[str]):
     """
-    Names whose SIGNATURE (params/return) changed or which were deleted — checked
-    by name against the old vs new content of each changed file. Robust to
-    multi-line signatures, which a line-based diff scan would miss.
+    Names whose SIGNATURE changed or which were deleted, plus readable before/after
+    signatures for the summary. Checked by name against old vs new file content
+    (robust to multi-line signatures a line-based diff scan would miss).
+    Returns (broken_set, {name: {"before","after"}}).
     """
     broken: Set[str] = set()
+    sigs: Dict[str, Dict[str, str]] = {}
     if not names:
-        return broken
+        return broken, sigs
     for f in files:
         old = _run(["git", "show", f"{base}:{f}"])
         new = _run(["git", "show", f"{head}:{f}"])
         for name in names:
-            o = _extract_signature(old, name)
-            n = _extract_signature(new, name)
-            if o is None and n is None:
+            ot, nt = _signature_text(old, name), _signature_text(new, name)
+            if ot is None and nt is None:
                 continue
-            if o is not None and (n is None or o != n):  # changed or removed
+            if ot is not None and (nt is None or _norm(ot) != _norm(nt)):
                 broken.add(name)
-    return broken
+                sigs[name] = {"before": _readable(ot) or "(removed)",
+                              "after": _readable(nt) or "(deleted)"}
+    return broken, sigs
 
 
 def classify_changes(base_sha: str, changed_symbols: List[str] = None, head: str = "HEAD") -> Dict[str, Any]:
@@ -139,12 +152,14 @@ def classify_changes(base_sha: str, changed_symbols: List[str] = None, head: str
             "note": "could not resolve the diff; risk not gated",
         }
 
-    broken = _contract_break_symbols(base_sha, head, files, changed_symbols)
+    broken, signatures = _contract_break_symbols(base_sha, head, files, changed_symbols)
     if broken:
         return {
             "edit_class": "contract-break",
             "edit_danger": 1.0,
             "contract_break_symbols": sorted(broken),
+            "signatures": signatures,
+            "files": files,
             "note": f"signature/contract changed: {', '.join(sorted(broken))} — callers may break",
         }
 
@@ -153,6 +168,8 @@ def classify_changes(base_sha: str, changed_symbols: List[str] = None, head: str
             "edit_class": "cosmetic",
             "edit_danger": 0.0,
             "contract_break_symbols": [],
+            "signatures": {},
+            "files": files,
             "note": "only comments/whitespace changed — no behavior observable by dependents",
         }
 
@@ -160,6 +177,8 @@ def classify_changes(base_sha: str, changed_symbols: List[str] = None, head: str
         "edit_class": "body-edit",
         "edit_danger": 0.5,
         "contract_break_symbols": [],
+        "signatures": {},
+        "files": files,
         "note": "internal logic changed; signature/contract intact (behavioral effect is advisory)",
     }
 

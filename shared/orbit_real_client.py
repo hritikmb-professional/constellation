@@ -173,9 +173,45 @@ class RealOrbitClient:
             return self._query_all_call_edges(kwargs)
         elif query_type == "symbol_defs":
             return self._query_symbol_defs(kwargs)
+        elif query_type == "direct_callers":
+            return self._query_direct_callers(kwargs)
         else:
             logger.warning(f"Unknown query type: {query_type}")
             return {}
+
+    def _query_direct_callers(self, params: Dict) -> Dict[str, Any]:
+        """
+        The DIRECT callers (1 hop) of the changed symbols — the call sites that a
+        contract change would break first. Returns each caller definition with
+        its file/line and a test/production flag so the review list can lead with
+        production callers. (The graph has no per-call-site line, so we point at
+        the caller definition, not the exact argument line — stated as advisory.)
+        """
+        symbols = params.get("symbols", [])
+        if not symbols:
+            return {"callers": []}
+        symbol_list = self._quote_symbols(symbols)
+        sql = f"""
+SELECT DISTINCT d.name AS name, d.fqn AS fqn, d.file_path AS file_path,
+       d.start_line AS start_line
+FROM gl_definition target
+INNER JOIN gl_edge e ON e.target_id = target.id AND e.relationship_kind = 'CALLS'
+INNER JOIN gl_definition d ON d.id = e.source_id
+WHERE target.name IN ({symbol_list})
+ORDER BY d.file_path, d.start_line;
+"""
+        rows = self.query_raw(sql)
+        callers = []
+        for r in rows:
+            fp = r.get("file_path") or ""
+            callers.append({
+                "name": r.get("name"),
+                "fqn": r.get("fqn"),
+                "file_path": fp,
+                "start_line": _to_int(r.get("start_line")),
+                "is_test": self._is_test_path(fp),
+            })
+        return {"callers": callers}
 
     def _query_all_call_edges(self, params: Dict) -> Dict[str, Any]:
         """Return every CALLS edge (source_id, target_id) for global centrality."""
@@ -388,6 +424,20 @@ JOIN gl_definition d ON d.id = c.id;
         keywords = ["security", "auth", "redaction", "server", "payment", "billing"]
         return any(kw in fp for kw in keywords)
 
+    @staticmethod
+    def _is_test_path(file_path: str) -> bool:
+        """Heuristic (by file path): is this a test/spec/fixture file vs production?"""
+        p = (file_path or "").replace("\\", "/").lower()
+        base = p.rsplit("/", 1)[-1]
+        return (
+            "/tests/" in p or "/test/" in p or "/spec/" in p or "/specs/" in p
+            or "integration-tests" in p or "/fixtures/" in p or "/fuzz/" in p
+            or "/benches/" in p or "/examples/" in p
+            or base.startswith("test_") or base.startswith("test.")
+            or base.endswith("_test.py") or base.endswith("_test.go")
+            or ".test." in base or ".spec." in base
+        )
+
     def _query_affected_files(self, symbols: List[str]) -> List[Dict[str, Any]]:
         """Real per-file transitive blast radius: files containing transitive callers."""
         if not symbols:
@@ -411,18 +461,30 @@ ORDER BY affected_defs DESC;
         rows = self._query_affected_files(symbols)
 
         services = []
+        test_deps = 0
+        prod_deps = 0
         for i, r in enumerate(rows):
             fp = r.get("file_path") or ""
+            n = _to_int(r.get("affected_defs"))
+            if self._is_test_path(fp):
+                test_deps += n
+            else:
+                prod_deps += n
             services.append(
                 {
                     "project_id": f"f{i + 1}",
                     "project_name": self._module_of(fp),
                     "full_path": fp,
-                    "affected_definitions": _to_int(r.get("affected_defs")),
+                    "affected_definitions": n,
                     "is_critical_path": self._is_critical_path(fp),
+                    "is_test": self._is_test_path(fp),
                 }
             )
-        return {"affected_services": services}
+        return {
+            "affected_services": services,
+            "test_dependents": test_deps,
+            "production_dependents": prod_deps,
+        }
 
     def _query_affected_owners(self, params: Dict) -> Dict[str, Any]:
         """

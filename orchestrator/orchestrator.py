@@ -50,6 +50,9 @@ class ComposedVerdict:
     edit_class: str = ""
     edit_note: str = ""
     contract_break_symbols: List[str] = None
+    edit_signatures: Dict[str, Any] = None   # {name: {"before","after"}}
+    edit_files: List[str] = None
+    callers_to_review: List[Dict[str, Any]] = None   # direct callers for a contract break
     evidence_trails: List[str] = None
 
     def __post_init__(self):
@@ -57,6 +60,12 @@ class ComposedVerdict:
             self.evidence_trails = []
         if self.contract_break_symbols is None:
             self.contract_break_symbols = []
+        if self.edit_signatures is None:
+            self.edit_signatures = {}
+        if self.edit_files is None:
+            self.edit_files = []
+        if self.callers_to_review is None:
+            self.callers_to_review = []
 
 
 class Orchestrator:
@@ -111,6 +120,18 @@ class Orchestrator:
         composed.edit_class = edit.get("edit_class", "")
         composed.edit_note = edit.get("note", "")
         composed.contract_break_symbols = list(edit.get("contract_break_symbols", []) or [])
+        composed.edit_signatures = dict(edit.get("signatures", {}) or {})
+        composed.edit_files = list(edit.get("files", []) or [])
+
+        # For a contract change, fetch the direct callers to review (the worklist).
+        if composed.contract_break_symbols and self.orbit_client:
+            try:
+                res = self.orbit_client.query(
+                    "direct_callers", symbols=composed.contract_break_symbols
+                )
+                composed.callers_to_review = res.get("callers", []) if res else []
+            except Exception as e:
+                logger.warning(f"Orchestrator: direct-caller query failed ({e})")
 
         # Route to handlers
         if "merge_request.opened" in event_type or event_type == "mr_opened":
@@ -132,7 +153,7 @@ class Orchestrator:
 
         Impact runs first and materializes a blast-radius subgraph. If the MR
         touches symbols that carry known security findings, Provenance runs
-        next and CONSUMES that subgraph rather than re-querying Orbit — this is
+        next and CONSUMES that subgraph rather than re-querying Orbit - this is
         the shared-context composition that makes Constellation more than four
         independent tools.
         """
@@ -151,7 +172,7 @@ class Orchestrator:
         subgraph = self.impact_agent.last_subgraph
 
         # Composition: Ownership consumes the same materialized subgraph to score
-        # bus-factor risk — no second Orbit traversal.
+        # bus-factor risk - no second Orbit traversal.
         if subgraph and subgraph.affected_owners:
             ownership_result = self.ownership_agent.analyze_subgraph(
                 impact_result.event_id, subgraph
@@ -163,7 +184,7 @@ class Orchestrator:
             )
 
         # Composition: Compliance consumes the same subgraph to evaluate whether
-        # the blast radius crosses a control boundary — again, no re-traversal.
+        # the blast radius crosses a control boundary - again, no re-traversal.
         if subgraph and subgraph.affected_services:
             compliance_result = self.compliance_agent.analyze_subgraph(
                 impact_result.event_id, subgraph, mr_meta=payload.get("mr_meta")
@@ -190,7 +211,7 @@ class Orchestrator:
                 )
             else:
                 verdict.evidence_trails.append(
-                    "Provenance analysis completed (independent query — symbol not in subgraph)"
+                    "Provenance analysis completed (independent query - symbol not in subgraph)"
                 )
 
     def _handle_finding_created(self, payload: Dict[str, Any], verdict: ComposedVerdict):
@@ -260,7 +281,7 @@ class Orchestrator:
 
         # Edit-semantics gate: scale the topology risk by how dangerous the
         # actual change is. A provably-cosmetic edit (danger 0) collapses risk to
-        # ~0 no matter how central the code is — killing the "comment on a
+        # ~0 no matter how central the code is - killing the "comment on a
         # keystone => BLOCK" false positive; a contract-breaking edit (1.0)
         # keeps full risk. Default danger 1.0 leaves behavior unchanged.
         gated_risk = blended_risk * verdict.edit_danger
@@ -297,7 +318,7 @@ class Orchestrator:
             confidence = verdict.impact_verdict.get("confidence", 0.0)
 
         # A keystone only forces senior review when the EDIT could actually
-        # affect it — a cosmetic change to a keystone shouldn't escalate.
+        # affect it - a cosmetic change to a keystone shouldn't escalate.
         keystone_escalates = bool(keystones) and verdict.edit_danger >= 0.5
 
         if level == "CRITICAL":
@@ -319,6 +340,109 @@ class Orchestrator:
         verdict.recommended_action = action
         verdict.action_reason = reason
         logger.info(f"Orchestrator: decision gate -> {action} ({reason})")
+
+    def _render_change_summary(self, verdict: "ComposedVerdict") -> str:
+        """Plain-language 'what this change does', grounded entirely in the data."""
+        impact = verdict.impact_verdict or {}
+        syms = impact.get("changed_symbols", []) or []
+        deps = impact.get("total_dependents", 0)
+        nfiles = len(impact.get("affected_services", []))
+        prod = impact.get("production_dependents", 0)
+        test = impact.get("test_dependents", 0)
+        keystones = [k["name"] for k in impact.get("keystone_symbols", [])]
+        chokepoints = impact.get("chokepoints", []) or []
+        boundaries = (verdict.compliance_verdict or {}).get("crossed_boundaries", [])
+        action = verdict.recommended_action.replace("_", " ")
+        sym_str = ", ".join(f"`{s}`" for s in syms[:3]) or "the changed code"
+
+        out = ["## What this change does\n"]
+        if verdict.edit_class == "cosmetic":
+            out.append(f"This MR edits {sym_str} but changes **only comments/whitespace** - nothing its dependents can observe.\n")
+        elif verdict.edit_class == "contract-break":
+            cb = ", ".join(f"`{s}`" for s in verdict.contract_break_symbols)
+            out.append(f"This MR **changes the call contract** of {cb} (signature/parameters changed):\n")
+            for name, sg in (verdict.edit_signatures or {}).items():
+                out.append(f"- `{name}`")
+                out.append(f"  - before: `{sg.get('before', '')}`")
+                out.append(f"  - after:  `{sg.get('after', '')}`")
+            out.append("")
+        elif verdict.edit_class == "body-edit":
+            out.append(f"This MR changes the **internal logic** of {sym_str} (signature unchanged); the behavioral effect is left for the reviewer to read in the diff.\n")
+        else:
+            out.append(f"This MR changes {sym_str}.\n")
+
+        ctx = []
+        if keystones:
+            ctx.append(f"a **keystone** (called by {deps} definitions across {nfiles} files)")
+        if chokepoints:
+            ctx.append(f"a **chokepoint** - if it failed, {chokepoints[0].get('isolated', 0)} definitions would be cut off")
+        if boundaries:
+            ctx.append("reaches **" + ", ".join(boundaries) + "** code")
+        if ctx:
+            out.append("In context, the affected code is " + "; ".join(ctx) + ".")
+        if (prod + test) > 0:
+            out.append(f"Of {deps} dependents, **{prod} are production** code and {test} are tests (by file path).")
+        out.append("")
+
+        if verdict.edit_class == "contract-break":
+            out.append(f"**Consequence:** callers must be updated to match the new contract or they break (see the review list). Decision: **{action}**.")
+        elif verdict.edit_class == "cosmetic":
+            out.append(f"**Consequence:** the change cannot affect any dependent, so despite the code's centrality it is cleared to **{action}**.")
+        else:
+            out.append(f"**Decision:** {action} - topology risk gated by edit danger x{verdict.edit_danger:g}.")
+        out.append("\n---\n")
+        return "\n".join(out) + "\n"
+
+    def _render_blast_diagram(self, impact: Dict[str, Any]) -> str:
+        """A small mermaid map: the changed symbol and its top chokepoints."""
+        syms = impact.get("changed_symbols", []) or []
+        deps = impact.get("total_dependents", 0)
+        nfiles = len(impact.get("affected_services", []))
+        cps = (impact.get("chokepoints", []) or [])[:4]
+        lbl = " / ".join(syms[:2]) or "change"
+
+        lines = [
+            "## Blast-radius map",
+            "```mermaid",
+            "graph LR",
+            "  classDef changed fill:#cce5ff,stroke:#3366cc,color:#111;",
+            "  classDef choke fill:#ffd6d6,stroke:#cc0000,color:#111;",
+            f'  CHG["{lbl} - changed, {deps} dependents in {nfiles} files"]:::changed',
+        ]
+        if not cps:
+            lines.append(f'  BR["{deps} transitive dependents"] --> CHG')
+        for i, c in enumerate(cps):
+            nid = f"CP{i}"
+            nm = str(c.get("name", "?")).replace('"', "'")
+            iso = c.get("isolated", 0)
+            lines.append(f'  {nid}["{nm} - isolates {iso}"]:::choke')
+            lines.append(f"  {nid} --> CHG")
+        lines.append("```")
+        lines.append("\n_Red = structural chokepoints whose failure isolates downstream code._\n\n---\n")
+        return "\n".join(lines) + "\n"
+
+    def _render_callers(self, verdict: "ComposedVerdict") -> str:
+        """The worklist of direct callers to review for a contract change."""
+        callers = verdict.callers_to_review or []
+        prod = [c for c in callers if not c.get("is_test")]
+        tests = [c for c in callers if c.get("is_test")]
+        lead = prod if prod else callers
+        cb = ", ".join(f"`{s}`" for s in verdict.contract_break_symbols)
+
+        lines = [
+            "## Callers to review",
+            f"{cb} changed its contract; **{len(callers)} direct caller(s)** "
+            f"({len(prod)} production, {len(tests)} test) call it. Start here:",
+            "",
+        ]
+        for c in lead[:12]:
+            loc = f"{c.get('file_path', '?')}:{c.get('start_line', '?')}"
+            tag = " _(test)_" if c.get("is_test") else ""
+            lines.append(f"- [ ] `{c.get('name', '?')}` - `{loc}`{tag}")
+        if len(lead) > 12:
+            lines.append(f"- … and {len(lead) - 12} more")
+        lines.append("\n_Advisory: points at the caller function - the graph has no per-call-site line, so verify the exact argument list._\n\n---\n")
+        return "\n".join(lines) + "\n"
 
     def format_as_markdown(self, verdict: ComposedVerdict) -> str:
         """Format composed verdict as GitLab markdown."""
@@ -342,35 +466,27 @@ class Orchestrator:
 
 """
 
-        # Edit analysis — what changed, which gated the verdict (not just centrality).
+        # Plain-language summary of what the change does, in system context.
         if verdict.edit_class:
-            label = {
-                "cosmetic": "[OK] Cosmetic — comments/whitespace only",
-                "body-edit": "[~] Body edit — internal logic changed (signature intact)",
-                "contract-break": "[X] Contract change — signature/return/deletion",
-                "unknown": "[?] Change class undetermined",
-            }.get(verdict.edit_class, verdict.edit_class)
-            md += f"""## Change Analysis
-**Edit class:** {label}  (risk gated x{verdict.edit_danger:g})
-{verdict.edit_note}
+            md += self._render_change_summary(verdict)
 
-"""
-            if verdict.contract_break_symbols:
-                md += (
-                    "Contract changed for: "
-                    + ", ".join(f"`{s}`" for s in verdict.contract_break_symbols)
-                    + " — callers may need updating.\n\n"
-                )
-            if verdict.edit_class == "cosmetic":
-                md += "_Risk de-escalated: the change cannot affect dependents, regardless of how central this code is._\n\n"
-            md += "---\n\n"
+        # Blast-radius diagram (the changed symbol + its structural chokepoints).
+        if verdict.impact_verdict and verdict.impact_verdict.get("total_dependents", 0) > 0:
+            md += self._render_blast_diagram(verdict.impact_verdict)
+
+        # Callers to review (the worklist for a contract change).
+        if verdict.callers_to_review:
+            md += self._render_callers(verdict)
 
         # Add Impact section if available
         if verdict.impact_verdict:
             impact_data = verdict.impact_verdict
+            prod = impact_data.get("production_dependents", 0)
+            test = impact_data.get("test_dependents", 0)
+            split = f" - **{prod} production**, {test} test" if (prod + test) > 0 else ""
             md += f"""## Impact Analysis
 
-Blast Radius: **{impact_data['total_dependents']}** transitive dependents across **{len(impact_data['affected_services'])}** services
+Blast Radius: **{impact_data['total_dependents']}** transitive dependents across **{len(impact_data['affected_services'])}** files{split}
 
 """
             for svc in impact_data.get("affected_services", []):
