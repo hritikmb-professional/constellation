@@ -53,7 +53,7 @@ def main() -> int:
 
     # Classify WHAT changed (cosmetic / body-edit / contract-break) so risk is
     # gated by the edit, not just the centrality of the symbol touched.
-    edit = classify_changes(base)
+    edit = classify_changes(base, changed_symbols=symbols)
     print(f"Edit class: {edit['edit_class']} (danger {edit['edit_danger']}) — {edit['note']}")
 
     if not symbols:

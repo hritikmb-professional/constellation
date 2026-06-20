@@ -32,13 +32,6 @@ from typing import Dict, List, Set, Any
 # subject of analysis.
 _SELF_PREFIXES = ("constellation/",)
 
-# Signature headers we can compare as single lines, across the common langs.
-_SIG_RE = re.compile(
-    r"^([+-])\s*"
-    r"((?:pub(?:\([^)]*\))?\s+|async\s+|unsafe\s+|const\s+|export\s+|public\s+|private\s+|static\s+|default\s+)*"
-    r"(?:fn|def|function)\s+([A-Za-z_][A-Za-z0-9_]*)\s*[(<].*)$"
-)
-
 _C_LIKE = {".rs", ".c", ".cc", ".cpp", ".h", ".hpp", ".java", ".js", ".jsx",
            ".ts", ".tsx", ".go", ".kt", ".swift", ".scala"}
 _HASH_LIKE = {".py", ".rb", ".sh", ".pl"}
@@ -78,31 +71,65 @@ def _file_is_cosmetic(base: str, head: str, path: str) -> bool:
     return _strip_comments_ws(old, ext) == _strip_comments_ws(new, ext)
 
 
-def _contract_break_symbols(base: str, head: str) -> Set[str]:
-    """Names whose single-line signature was changed or removed in the diff."""
-    diff = _run(["git", "diff", "--no-color", base, head])
-    old: Dict[str, str] = {}
-    new: Dict[str, str] = {}
-    for line in diff.splitlines():
-        m = _SIG_RE.match(line)
-        if not m:
-            continue
-        sign, sig_text, name = m.group(1), m.group(2).strip(), m.group(3)
-        (old if sign == "-" else new)[name] = sig_text
+def _extract_signature(content: str, name: str):
+    """
+    Extract a function's normalized signature by NAME (params + return), spanning
+    a possibly multi-line parameter list to its matching close paren. Returns None
+    if the function isn't found. Name-based so it needs no old/new line spans.
+    """
+    m = re.search(r"\b(?:fn|def|function)\s+" + re.escape(name) + r"\s*[(<]", content)
+    if not m:
+        return None
+    # Find the param-list open paren at/after the match, then its matching close.
+    open_idx = content.find("(", m.start())
+    if open_idx == -1:
+        return None
+    depth, j = 0, open_idx
+    while j < len(content):
+        c = content[j]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        j += 1
+    sig = content[m.start():j + 1]
+    # include the return type up to the body/terminator
+    tail = content[j + 1:j + 200].split("{")[0].split(":")[0].split(";")[0]
+    return re.sub(r"\s+", "", sig + tail)
+
+
+def _contract_break_symbols(base: str, head: str, files: List[str], names: List[str]) -> Set[str]:
+    """
+    Names whose SIGNATURE (params/return) changed or which were deleted — checked
+    by name against the old vs new content of each changed file. Robust to
+    multi-line signatures, which a line-based diff scan would miss.
+    """
     broken: Set[str] = set()
-    for name, sig in old.items():
-        if name not in new or new[name] != sig:   # removed, or signature changed
-            broken.add(name)
+    if not names:
+        return broken
+    for f in files:
+        old = _run(["git", "show", f"{base}:{f}"])
+        new = _run(["git", "show", f"{head}:{f}"])
+        for name in names:
+            o = _extract_signature(old, name)
+            n = _extract_signature(new, name)
+            if o is None and n is None:
+                continue
+            if o is not None and (n is None or o != n):  # changed or removed
+                broken.add(name)
     return broken
 
 
-def classify_changes(base_sha: str, head: str = "HEAD") -> Dict[str, Any]:
+def classify_changes(base_sha: str, changed_symbols: List[str] = None, head: str = "HEAD") -> Dict[str, Any]:
     """
     Classify the MR's edit into {edit_class, edit_danger, contract_break_symbols, note}.
 
     edit_danger multiplies the topology risk; default 1.0 (no gating) only when
     we cannot read the diff, so behavior is never *silently* weakened.
     """
+    changed_symbols = changed_symbols or []
     files = _changed_files(base_sha, head)
     if not files:
         return {
@@ -112,7 +139,7 @@ def classify_changes(base_sha: str, head: str = "HEAD") -> Dict[str, Any]:
             "note": "could not resolve the diff; risk not gated",
         }
 
-    broken = _contract_break_symbols(base_sha, head)
+    broken = _contract_break_symbols(base_sha, head, files, changed_symbols)
     if broken:
         return {
             "edit_class": "contract-break",
