@@ -15,6 +15,12 @@
 # The Orbit binary is downloaded at job time (verified by SHA256). The bundled
 # bin/orbit.exe is Windows-only and intentionally git-ignored.
 
+# Only create pipelines for merge requests — Constellation analyzes MRs, so a
+# plain push to a branch should not spin up an (empty) pipeline.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
 stages:
   - analyze
 
