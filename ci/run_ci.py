@@ -27,6 +27,7 @@ from orchestrator import Orchestrator           # noqa: E402
 from changed_symbols import changed_symbols      # noqa: E402
 from edit_semantics import classify_changes      # noqa: E402
 from scar_map import compute_scar_prior          # noqa: E402
+from git_ownership import compute_git_ownership   # noqa: E402
 from gitlab_post import post_or_update_verdict   # noqa: E402
 
 
@@ -75,12 +76,24 @@ def main() -> int:
         print(f"[!] scar prior skipped ({e})")
         scar = {}
 
+    # Git-truth ownership: real git-blame authorship over the blast radius,
+    # anonymized. Best-effort - never block the verdict on a git hiccup.
+    try:
+        ownership = compute_git_ownership(client, symbols, repo=".")
+        if ownership.get("available"):
+            print(f"Git-truth ownership: bus factor {ownership['bus_factor']}, top author "
+                  f"{ownership['concentration']:.0%} (blamed {ownership['definitions_blamed']} defs)")
+    except Exception as e:
+        print(f"[!] git ownership skipped ({e})")
+        ownership = {}
+
     payload = {
         "mr_id": os.environ.get("CI_MERGE_REQUEST_IID", "local"),
         "changed_symbols": symbols,
         "mr_title": os.environ.get("CI_MERGE_REQUEST_TITLE", ""),
         "edit_semantics": edit,
         "scar_analysis": scar,
+        "git_ownership": ownership,
     }
 
     # The Provenance lens answers "where does THIS vulnerability reach?" so it

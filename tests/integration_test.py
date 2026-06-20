@@ -518,6 +518,71 @@ def test_history_scar_prior():
     return with_scar
 
 
+def test_git_truth_ownership():
+    """
+    The git-truth ownership block must render real, anonymized authors with a
+    SPOF warning when supplied, and be ABSENT-SAFE (no block, no change) when not.
+    """
+    print("\n" + "=" * 80)
+    print("TEST 7: Git-Truth Ownership (real blame, anonymized)")
+    print("=" * 80)
+
+    if DefaultOrbitClient == RealOrbitClient:
+        orbit_client = RealOrbitClient(orbit_binary_path=DEFAULT_ORBIT_BINARY)
+        symbols = ["allow_all"]
+    else:
+        orbit_client = DefaultOrbitClient()
+        symbols = ["process_config"]
+    orchestrator = Orchestrator(orbit_client, gitlab_client=None)
+
+    def run(extra):
+        p = {"mr_id": "own", "changed_symbols": symbols, "mr_title": "x",
+             "edit_semantics": {"edit_class": "body-edit", "edit_danger": 0.5,
+                                "contract_break_symbols": [], "note": ""}}
+        p.update(extra)
+        return orchestrator.handle_event(
+            {"event_id": "own", "event_type": "mr_opened",
+             "timestamp": datetime.utcnow().isoformat(), "payload": p}
+        )
+
+    # Synthetic, anonymized git ownership (as CI would supply), no git needed.
+    ownership = {
+        "available": True, "anonymized": True, "definitions_blamed": 7, "bus_factor": 1,
+        "concentration": 0.77,
+        "owners": [{"owner": "Author A", "share": 0.77}, {"owner": "Author B", "share": 0.21}],
+        "reviewers": ["Author A", "Author B"],
+        "spof": {"is_spof": True, "owner": "Author B", "symbol": "lookup_chunks",
+                 "inbound": 3, "share": 1.0,
+                 "note": "Author B wrote 100% of `lookup_chunks` (3 callers) - SPOF."},
+        "note": "real authorship from git blame; anonymized",
+    }
+
+    with_own = run({"git_ownership": ownership})
+    without = run({})
+
+    md = orchestrator.format_as_markdown(with_own)
+    # (a) the real-ownership block renders, anonymized, with the SPOF
+    assert "who actually wrote this" in md, "git-truth ownership block missing"
+    assert "Author A" in md and "Author B" in md, "anonymized owners not rendered"
+    assert "Single point of failure" in md, "SPOF warning not rendered"
+    # privacy: no raw email leaks from an anonymized analysis
+    assert "@" not in md.split("who actually wrote this", 1)[1].split("---", 1)[0], (
+        "anonymized ownership must not leak emails"
+    )
+    assert any("Git-truth ownership" in t for t in with_own.evidence_trails), (
+        "git ownership not recorded in evidence trail"
+    )
+
+    # (b) absent-safe: no ownership data -> no block, empty analysis
+    assert without.git_ownership == {}, "git ownership should be empty when not supplied"
+    assert "who actually wrote this" not in orchestrator.format_as_markdown(without), (
+        "git-truth block should not appear without ownership data"
+    )
+
+    print("\n[PASS] TEST 7 PASSED - real anonymized owners + SPOF render, and absent-safe")
+    return with_own
+
+
 def run_all_tests():
     """Run all integration tests."""
     print("\n" + "#" * 80)
@@ -532,6 +597,7 @@ def run_all_tests():
         test_shared_context_composition()
         test_edit_semantics_gate()
         test_history_scar_prior()
+        test_git_truth_ownership()
 
         print("\n" + "#" * 80)
         print("# ALL TESTS PASSED [OK]")

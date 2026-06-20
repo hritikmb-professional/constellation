@@ -133,6 +133,35 @@ nudge toward human review, capped and shown with its evidence. And it is
 is 0 and the structural calibration in section 4 is unchanged - verified by a
 regression test (Test 6).
 
+## 8. Real ownership, not a proxy (and the privacy line we drew)
+
+The structural Ownership lens groups impact by code *area* and openly hedges
+"CODEOWNERS pending at deploy." `ci/git_ownership.py` closes that gap with zero
+new data sources: it runs `git blame` over each definition's exact line span
+across the blast radius, attributes surviving lines to real authors, and weights
+each definition by its call-graph centrality (sublinear, so one mega-keystone
+can't swamp the result). Out comes a real bus factor, a "reviewers who actually
+know this code" list, and a single-point-of-failure warning.
+
+On the real Orbit history it is specific and correct - and it discriminates per
+symbol rather than always naming the most prolific committer:
+
+- the whole query-engine **compiler + its integration tests** (39 of 40
+  definitions in `compile`'s blast radius) trace to **one author** - a true
+  bus-factor-1 subsystem;
+- yet `lookup_chunks` correctly flags a **different** person as its sole author.
+
+Two deliberate honesty choices:
+
+- **Privacy.** Blame on a real repo names real people. By default the verdict
+  **anonymizes** authors to ordinal labels ("Author A", ranked by ownership), so
+  a public hackathon comment never brands an individual as a SPOF. Real
+  names/emails are opt-in (`CONSTELLATION_REAL_NAMES=1`) for internal runs. A
+  regression test asserts no email leaks from an anonymized verdict.
+- **No `-C`.** We use plain `git blame -w`, deliberately omitting cross-file copy
+  detection - it can credit copied code to an unrelated original author, the kind
+  of over-attribution this project's brand avoids.
+
 ---
 
 ### Why this matters for judging
@@ -147,6 +176,7 @@ page documents, and every number is reproducible:
 BACKTEST_ORBIT=/path/to/orbit python backtest.py 25     # section 4
 BACKTEST_ORBIT=/path/to/orbit python find_risk.py       # section 5
 BACKTEST_ORBIT=/path/to/orbit python risk_map.py > risk_map.svg
-SCAR_REPO=. BACKTEST_ORBIT=/path/to/orbit python ci/scar_map.py   # section 7
-python tests/integration_test.py                        # sections 3 & 7 (Tests 5, 6)
+SCAR_REPO=. BACKTEST_ORBIT=/path/to/orbit python ci/scar_map.py        # section 7
+SCAR_REPO=. BACKTEST_ORBIT=/path/to/orbit python ci/git_ownership.py compile  # section 8
+python tests/integration_test.py                        # sections 3,7,8 (Tests 5-7)
 ```

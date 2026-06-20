@@ -56,6 +56,9 @@ class ComposedVerdict:
     # History-grounded scar prior (git reverts/hotfixes/fix-density near the
     # change), with receipts. Supplied by CI; empty when not computed.
     scar_analysis: Dict[str, Any] = None
+    # Git-truth ownership (real, centrality-weighted git-blame authorship over the
+    # blast radius; anonymized). Supplied by CI; empty when not computed.
+    git_ownership: Dict[str, Any] = None
     evidence_trails: List[str] = None
 
     def __post_init__(self):
@@ -63,6 +66,8 @@ class ComposedVerdict:
             self.evidence_trails = []
         if self.scar_analysis is None:
             self.scar_analysis = {}
+        if self.git_ownership is None:
+            self.git_ownership = {}
         if self.contract_break_symbols is None:
             self.contract_break_symbols = []
         if self.edit_signatures is None:
@@ -134,6 +139,9 @@ class Orchestrator:
         if composed.scar_analysis and "scar_prior" not in payload:
             payload["scar_prior"] = float(composed.scar_analysis.get("prior", 0.0))
 
+        # Capture git-truth ownership (real authorship over the blast radius).
+        composed.git_ownership = payload.get("git_ownership") or {}
+
         # For a contract change, fetch the direct callers to review (the worklist).
         if composed.contract_break_symbols and self.orbit_client:
             try:
@@ -202,6 +210,15 @@ class Orchestrator:
             verdict.evidence_trails.append(
                 f"Ownership consumed Impact's subgraph: bus factor {ownership_result.bus_factor}, "
                 f"{ownership_result.concentration:.0%} concentrated in {ownership_result.top_area}"
+            )
+
+        # Git-truth ownership: record the real, blame-based bus factor (if CI computed it).
+        go = verdict.git_ownership or {}
+        if go.get("available"):
+            verdict.evidence_trails.append(
+                f"Git-truth ownership: real bus factor {go.get('bus_factor')}, top author owns "
+                f"{go.get('concentration', 0):.0%} of the centrality-weighted blast radius "
+                f"(blamed {go.get('definitions_blamed')} definitions; anonymized)"
             )
 
         # Composition: Compliance consumes the same subgraph to evaluate whether
@@ -465,6 +482,39 @@ class Orchestrator:
         lines.append("\n_Advisory: points at the caller function - the graph has no per-call-site line, so verify the exact argument list._\n\n---\n")
         return "\n".join(lines) + "\n"
 
+    def _render_git_ownership(self, verdict: "ComposedVerdict") -> str:
+        """Real, blame-based ownership of the blast radius (anonymized) - the
+        answer to the structural lens's 'CODEOWNERS pending' caveat."""
+        go = verdict.git_ownership or {}
+        if not go.get("available"):
+            return ""
+        owners = go.get("owners", [])
+        anon = go.get("anonymized", True)
+
+        lines = [
+            "## Ownership: who actually wrote this (git blame)",
+            f"Real authorship over the blast radius, weighted by call centrality "
+            f"(blamed **{go.get('definitions_blamed', 0)}** definitions). "
+            f"Real bus factor: **{go.get('bus_factor', '?')}**; "
+            f"top author owns **{go.get('concentration', 0):.0%}**.",
+            "",
+            "**Reviewers who actually know this code:**",
+        ]
+        for o in owners[:5]:
+            lines.append(f"- {o['owner']} - {o['share']:.0%} of the impacted load-bearing lines")
+
+        spof = go.get("spof")
+        if spof and spof.get("is_spof"):
+            lines.append("")
+            lines.append(f"> [!] **Single point of failure:** {spof.get('note', '')}")
+
+        tail = ("_Authors are anonymized to ordinal labels by default so a public verdict "
+                "never names an individual; set `CONSTELLATION_REAL_NAMES=1` for internal runs._"
+                if anon else
+                "_Showing real names (CONSTELLATION_REAL_NAMES=1)._")
+        lines.append("\n" + tail + "\n\n---\n")
+        return "\n".join(lines) + "\n"
+
     def _render_scars(self, verdict: "ComposedVerdict") -> str:
         """History-grounded risk: the scarred neighborhood and the commit receipts."""
         scar = verdict.scar_analysis or {}
@@ -584,6 +634,10 @@ Risk: **{own['risk_level']}** - {own['risk_note']}
             for area in own.get("owning_areas", [])[:5]:
                 md += f"- `{area['name']}` - {area['affected_definitions']} ({area['share']:.0%})\n"
             md += "\n---\n\n"
+
+        # Git-truth ownership (real blame-based authors) - answers the structural
+        # lens's "CODEOWNERS pending" caveat with actual data.
+        md += self._render_git_ownership(verdict)
 
         # Add Compliance section if available
         if verdict.compliance_verdict:
