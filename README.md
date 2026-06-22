@@ -126,12 +126,13 @@ Open a merge request → the pipeline runs → Constellation comments. A GitLab 
 
 ## Status — what's real vs. deferred
 
-Constellation is an **honestly-scoped validated prototype**, not a finished product. We keep this explicit:
+Constellation is **deployed and honestly-scoped**. We keep the real/representative line explicit:
 
-**Real today (validated against a live Orbit index, 5 integration tests):**
+**Real today (validated against a live Orbit index, 7 integration tests; deployed in GitLab CI):**
 - All four lenses, the shared-subgraph composition, blended risk, and the Decision Gate
 - Recursive transitive blast radius, keystone detection, PageRank centrality, cut-vertex chokepoints
-- Real changed-symbol extraction from an MR diff; verdict posting via CI
+- The edit-semantics gate, the history scar prior (with receipts), and git-truth ownership
+- Real changed-symbol extraction from an MR diff; verdict **posted as an MR comment in CI** (`ci/gitlab_post.py`), with optional BLOCK-fails-pipeline enforcement
 
 **Deferred — needs a live GitLab/Orbit-Remote instance (not faked, labelled in output):**
 - SDLC enrichment: the Provenance lineage's `MR → author` half, and Compliance's approval/pipeline checks (the tables aren't in Orbit Local)

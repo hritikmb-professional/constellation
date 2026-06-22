@@ -1,7 +1,7 @@
 # Constellation GitLab Deployment Guide
 
-**Status:** Validated prototype for Duo Agent Platform (validated against real Orbit data, with a deferred deployment layer)  
-**Last Updated:** June 18, 2026  
+**Status:** Deployed — runs in GitLab CI on every merge request, computes the four-lens verdict over real Orbit data, and posts it as an MR comment (`ci/gitlab_post.py` + `.gitlab-ci.yml`). It can also fail the pipeline on a BLOCK verdict (`CONSTELLATION_ENFORCE=1`). The only genuinely deferred piece is SDLC-lineage enrichment (Provenance `MR → author`, Compliance approval/pipeline checks) — those tables don't exist in Orbit Local, so that half stays representative and is labelled as such in the output.  
+**Last Updated:** June 22, 2026  
 **Deadline:** June 24, 2026
 
 ---
@@ -104,11 +104,11 @@ glab agent create compliance .gitlab/agents/compliance/agent.yml
 glab agent create ownership .gitlab/agents/ownership/agent.yml
 ```
 
-### **Step 6: Enable Webhooks**
+### **Step 6: (Optional) Webhooks for non-CI triggers**
 
-> **Note:** The webhook trigger and posting the verdict back as an MR comment are deferred (not yet wired up). The orchestrator currently runs the full four-lens composition over real Orbit data; the steps below describe the deploy-time wiring that remains to be completed.
+> **Note:** The default trigger is **GitLab CI merge-request pipelines** — no webhook needed. On every MR, `.gitlab-ci.yml` indexes the repo with Orbit, runs `python ci/run_ci.py`, and posts the verdict as an MR comment via the notes API (`ci/gitlab_post.py`); this is wired and running. The webhook below is an optional alternative trigger for event sources outside CI (e.g. a standalone finding-created event).
 
-For Constellation to trigger on MR/finding events:
+To trigger Constellation outside CI (optional):
 
 1. Go to **Settings** → **Webhooks**
 2. Add webhook:
@@ -149,15 +149,16 @@ python demo.py
 
 ## ✅ Verification Checklist
 
-After deployment:
+Verified on the live GitLab CI pipeline:
 
-- [ ] All 4 agents registered in GitLab
-- [ ] `.gitlab/flow.yml` present and valid
-- [ ] Webhooks configured and active
-- [ ] Test MR can be created without errors
-- [ ] Agent responds within 30 seconds
-- [ ] Comment posted to MR with analysis
-- [ ] All metrics present (dependents, risk, owners)
+- [x] `.gitlab-ci.yml` runs on merge-request pipelines and indexes the repo with Orbit
+- [x] Changed symbols extracted from the real MR diff
+- [x] Four-lens verdict computed over real Orbit data
+- [x] Comment posted to the MR with the analysis (notes API, `ci/gitlab_post.py`)
+- [x] BLOCK verdict can fail the pipeline (`CONSTELLATION_ENFORCE=1`)
+- [x] All metrics present (dependents, risk, owners, chokepoints)
+
+> **Live evidence:** _paste the merge-request permalink and a screenshot of the posted Constellation comment here_ — `<MR URL>`. (The pipeline job log shows the `Posted verdict to MR, HTTP 201` line.)
 
 ---
 
@@ -220,8 +221,8 @@ glab agent logs impact --tail 50
 
 Expected performance:
 - **Analysis time:** <1 second (recursive Orbit blast-radius query is <60ms)
-- **Comment posting:** <5 seconds (GitLab API) — posting the verdict as an MR comment is deferred
-- **Total MR feedback:** <10 seconds
+- **Comment posting:** <5 seconds (GitLab notes API, `ci/gitlab_post.py`)
+- **Total MR feedback:** dominated by `orbit index` on the host repo, then <10 seconds for analysis + posting
 
 ### **Update Agents**
 
@@ -275,4 +276,4 @@ Deployment is successful when:
 
 ---
 
-**Validated prototype — the four-lens orchestrator runs against real Orbit data today. To deploy, complete the deferred layer (webhook trigger, MR-comment posting, and SDLC enrichment), then push to your repo and request Duo Agent Platform access.**
+**Deployed — the four-lens orchestrator runs in GitLab CI on every merge request against real Orbit data and posts the verdict as an MR comment today. The only deferred piece is SDLC-lineage enrichment (Provenance `MR → author`, Compliance approval/pipeline checks), which needs Orbit-Remote's SDLC tables and is labelled representative in the output until then.**

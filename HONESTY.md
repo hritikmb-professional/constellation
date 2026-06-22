@@ -51,6 +51,17 @@ Topology alone cannot tell these apart - it sees 509 either way. Constellation
 can, because risk now reflects **what changed, not just where**. (This is
 encoded as a passing regression test: `tests/integration_test.py` -> Test 5.)
 
+> **Caveat we owe you (blast radius is an upper bound).** Symbols are resolved
+> by name, so when a name is reused the traversal unions all definitions that
+> share it. `compile` resolves to 2 definitions in this graph and `allow_all`
+> to 4, so "509 dependents of `compile`" is the union over both `compile`
+> definitions - a deliberate over-approximation (better to over- than
+> under-state blast radius), but an upper bound, not an exact per-definition
+> count. FQN-level disambiguation is future work. (Related figure: the
+> `allow_all` + `compile` pair reaches 510 dependents - see
+> `REAL_DATA_VALIDATION.md`; the two numbers are different symbol sets, not a
+> contradiction.)
+
 ## 4. Calibration on real merged history (backtest)
 
 We replayed Constellation over the last **25 merged MRs** of the Orbit repo

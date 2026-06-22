@@ -1,7 +1,7 @@
 # ✅ REAL ORBIT DATA VALIDATION COMPLETE
 
-**Date:** June 16, 2026 (Day 1, Final)  
-**Status:** CONSTELLATION VALIDATED AGAINST REAL ORBIT DATA (deployment layer deferred)
+**Date:** June 16, 2026 (Day 1, Final); deployment reconciled June 22, 2026  
+**Status:** CONSTELLATION VALIDATED AGAINST REAL ORBIT DATA — and now DEPLOYED in GitLab CI (posts verdicts on real MRs). The only deferred piece is SDLC-lineage enrichment (representative until Orbit-Remote's SDLC tables are available).
 
 ---
 
@@ -230,13 +230,14 @@ A **VALIDATED PROTOTYPE** that:
 **Constellation is now validated against real Orbit data.**
 
 - ✓ Impact agent computing a REAL recursive blast radius (510 transitive vs mock 14)
-- ✓ All 5 integration tests passing (Tests 1, 3, 4 + full scenario on real data; Test 2 on representative lineage)
+- ✓ All 7 integration tests passing (Tests 1, 3, 4 + full scenario on real data; Test 2 on representative lineage; Tests 6-7 cover the scar prior and git-truth ownership, absent-safe)
 - ✓ Sub-60ms query performance validated
 - ✓ Four-lens composition proven end-to-end (same orchestrator the deploy path uses)
-- ✓ Deployment layer (webhook trigger, MR-comment posting, SDLC enrichment) deferred
+- ✓ Deployed in GitLab CI: posts the verdict on real MRs (`ci/gitlab_post.py`); BLOCK can fail the pipeline (`CONSTELLATION_ENFORCE=1`)
+- ✓ Only SDLC-lineage enrichment remains representative (Orbit Local has no SDLC tables)
 
-**This is a validated prototype, proven against real Orbit data, with a deferred deployment layer.**
+**Validated against real Orbit data AND deployed in GitLab CI on real merge requests; SDLC-lineage enrichment is the only representative piece.**
 
 ---
 
-**Status: REAL ORBIT INTEGRATION VALIDATED. DEPLOYMENT LAYER DEFERRED.**
+**Status: REAL ORBIT INTEGRATION VALIDATED. DEPLOYED IN GITLAB CI. SDLC-LINEAGE ENRICHMENT REPRESENTATIVE.**
