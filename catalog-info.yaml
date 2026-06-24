@@ -1,0 +1,72 @@
+spec:
+  type: agent
+  name: Constellation
+  description: >
+    Graph-native merge-request intelligence for GitLab. Constellation reads
+    GitLab Orbit's code-property graph on every MR — computing transitive blast
+    radius, keystone detection, structural chokepoints, ownership concentration,
+    and compliance boundaries — then issues an enforceable Decision Gate:
+    AUTO-APPROVE safe changes, BLOCK dangerous ones. In under a second, as an
+    MR comment, with optional pipeline enforcement.
+  version: "2.0"
+  category: code_review
+  tags:
+    - devops
+    - code-review
+    - merge-request
+    - blast-radius
+    - graph-analysis
+    - orbit
+    - security
+    - ci-cd
+  author: AeroFyta
+  license: MIT
+  links:
+    - title: Source Code
+      url: https://gitlab.com/hritikmb-professional/constellation
+    - title: Demo Video
+      url: https://gitlab.com/hritikmb-professional/constellation
+    - title: Backtest Report
+      url: https://gitlab.com/hritikmb-professional/constellation/-/blob/main/backtest_report.html
+  capabilities:
+    - name: Impact Analysis
+      description: >
+        Recursive transitive blast-radius traversal over Orbit's gl_edge CALLS
+        graph. Identifies keystones (high PageRank centrality), structural
+        chokepoints (cut-vertex / articulation-point analysis), and production
+        vs. test exposure.
+    - name: Ownership Risk
+      description: >
+        Bus-factor and committer-concentration analysis over the affected
+        subgraph using git-truth authorship data from Orbit.
+    - name: Compliance Gate
+      description: >
+        Detects when a change crosses a security or control boundary defined
+        in the code-property graph.
+    - name: Provenance
+      description: >
+        Traces vulnerability exposure through the call graph to quantify how
+        far a known finding can reach.
+    - name: Decision Gate
+      description: >
+        Blended risk model (0.6 * peak + 0.4 * average) drives a four-tier
+        verdict — AUTO_APPROVE, REVIEW_REQUIRED, SENIOR_REVIEW, or BLOCK —
+        posted as an MR comment. BLOCK can fail the CI pipeline.
+    - name: Edit-Semantics Gate
+      description: >
+        Classifies each changed symbol as cosmetic (comments, whitespace,
+        danger 0.0) or contract-breaking (signature / type change, danger 1.0).
+        A keystone touched by a cosmetic edit clears to AUTO-APPROVE regardless
+        of its centrality.
+  how_to_use: >
+    1. Fork or copy this repository into your GitLab namespace.
+    2. Add CI variable CONSTELLATION_TOKEN (project access token, api scope,
+       Reporter role, Masked, NOT protected).
+    3. Open a merge request — the pipeline runs automatically and posts the
+       Constellation verdict as an MR comment.
+    4. Set CONSTELLATION_ENFORCE=1 to turn BLOCK verdicts into hard pipeline
+       failures that prevent merging.
+  requirements:
+    - GitLab Orbit Local v0.75.1 or later
+    - Python 3.9+ (no third-party dependencies)
+    - GitLab CI/CD with a Linux runner
