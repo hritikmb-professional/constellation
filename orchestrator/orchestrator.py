@@ -549,20 +549,25 @@ class Orchestrator:
     def format_as_markdown(self, verdict: ComposedVerdict) -> str:
         """Format composed verdict as GitLab markdown."""
         action_labels = {
-            "AUTO_APPROVE": "[OK] AUTO-APPROVE",
-            "REVIEW_REQUIRED": "[~] REVIEW REQUIRED",
-            "SENIOR_REVIEW": "[!] SENIOR REVIEW REQUIRED",
-            "BLOCK": "[X] BLOCK MERGE",
+            "AUTO_APPROVE":   "AUTO-APPROVE",
+            "REVIEW_REQUIRED": "REVIEW REQUIRED",
+            "SENIOR_REVIEW":  "SENIOR REVIEW REQUIRED",
+            "BLOCK":          "BLOCK MERGE",
         }
         gate = action_labels.get(verdict.recommended_action, verdict.recommended_action)
 
-        md = f"""# Constellation Analysis
+        deps = (verdict.impact_verdict or {}).get("total_dependents", "—")
+        risk_pct = f"{verdict.overall_risk_score:.0%}" if verdict.overall_risk_score else "—"
 
-**Event:** {verdict.event_type} ({verdict.event_id})
-**Risk Level:** {verdict.overall_risk_level}
+        md = f"""## Constellation · {gate}
 
-> ## Decision: {gate}
 > {verdict.action_reason}
+
+| | |
+|---|---|
+| **Risk level** | {verdict.overall_risk_level} ({risk_pct} blended score) |
+| **Transitive dependents** | {deps} |
+| **Edit class** | {verdict.edit_class or "—"} (danger factor {verdict.edit_danger:.1f}) |
 
 ---
 
