@@ -557,7 +557,6 @@ class Orchestrator:
         gate = action_labels.get(verdict.recommended_action, verdict.recommended_action)
 
         deps = (verdict.impact_verdict or {}).get("total_dependents", "—")
-        risk_pct = f"{verdict.overall_risk_score:.0%}" if verdict.overall_risk_score else "—"
 
         md = f"""## Constellation · {gate}
 
@@ -565,7 +564,7 @@ class Orchestrator:
 
 | | |
 |---|---|
-| **Risk level** | {verdict.overall_risk_level} ({risk_pct} blended score) |
+| **Risk level** | {verdict.overall_risk_level} |
 | **Transitive dependents** | {deps} |
 | **Edit class** | {verdict.edit_class or "—"} (danger factor {verdict.edit_danger:.1f}) |
 

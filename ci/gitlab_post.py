@@ -36,7 +36,9 @@ def _api(method: str, path: str, payload: dict = None):
 
 
 def post_or_update_verdict(markdown: str) -> int:
-    project = os.environ["CI_PROJECT_ID"]
+    # CI_MERGE_REQUEST_PROJECT_ID is the target project (where the MR lives).
+    # Falls back to CI_PROJECT_ID for non-fork pipelines.
+    project = os.environ.get("CI_MERGE_REQUEST_PROJECT_ID") or os.environ["CI_PROJECT_ID"]
     iid = os.environ["CI_MERGE_REQUEST_IID"]
     body = f"{MARKER}\n{markdown}"
 
